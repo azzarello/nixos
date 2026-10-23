@@ -41,6 +41,28 @@
   networking.useDHCP = false;
   networking.interfaces.eno1.useDHCP = true;
   systemd.network.wait-online.anyInterface = true;
+
+  # If breaker boots while an AMT SOL/IDE-R session holds the I219's PHY, e1000e can't
+  # reset it ("PHY reset is blocked due to SOL/IDER session") and the link stays at
+  # AMT's 10 Mb/s low-power rate. Seen 2026-10-23 (0.3 MB/s downloads). Renegotiate
+  # until it's gigabit; harmless when it already is.
+  systemd.services.eno1-gigabit = {
+    description = "Renegotiate eno1 if it came up below 1000 Mb/s";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    path = [ pkgs.ethtool ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      for try in 1 2 3; do
+        speed=$(cat /sys/class/net/eno1/speed 2>/dev/null || echo 0)
+        [ "$speed" -ge 1000 ] && { echo "eno1 at $speed Mb/s"; exit 0; }
+        echo "eno1 at $speed Mb/s, renegotiating (try $try)"
+        ethtool -r eno1; sleep 10
+      done
+      echo "eno1 still below gigabit after 3 tries" >&2; exit 1
+    '';
+  };
   networking.firewall.enable = true;
 
   time.timeZone = "America/Los_Angeles";

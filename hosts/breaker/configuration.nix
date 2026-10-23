@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 {
   networking.hostName = "breaker";
 
@@ -8,13 +8,31 @@
 
   # ZFS for the NVMe data pool (created by hand after install, not by disko).
   # hostId is required by ZFS; stay on the default LTS kernel so unstable never outruns ZFS.
-  boot.supportedFilesystems = [ "zfs" ];
+  boot.supportedFilesystems = [ "zfs" "nfs" ];
   boot.zfs.forceImportRoot = false;
   networking.hostId = "0dd18c00";
   services.zfs.autoScrub.enable = true;
   # pantry: SK hynix P31 1TB NVMe, single vdev for now. Add the second drive with:
   #   zpool attach pantry nvme-SHGP31-1000GM-2_AS12T000710902J21 /dev/disk/by-id/<new-nvme>
   boot.zfs.extraPools = [ "pantry" ];
+  zfs.datasets."pantry/k3s" = { mountpoint = "/pantry/k3s"; };   # k3s app state (hostPath dirs)
+
+  # k3s hostPath volumes live on pantry: never start the cluster before the dataset is there.
+  systemd.services.k3s = {
+    after = [ "zfs-datasets.service" ];
+    requires = [ "zfs-datasets.service" ];
+    unitConfig.RequiresMountsFor = [ "/pantry/k3s" ];
+  };
+
+  # fridge (Unraid NAS) exports its media + downloads shares to breaker only (NFS, rw).
+  # On-demand automount + nofail: breaker boots and runs fine while fridge is down.
+  # Nothing uses these until the stream-tier cutover (local tier on fridge's disks).
+  fileSystems = lib.genAttrs [ "/mnt/fridge/media" "/mnt/fridge/downloads" ] (mnt: {
+    device = "192.168.68.67:/mnt/user/${baseNameOf mnt}";
+    fsType = "nfs";
+    options = [ "nfsvers=4.2" "noauto" "nofail" "x-systemd.automount" "x-systemd.idle-timeout=600"
+                "x-systemd.mount-timeout=30" "_netdev" "noatime" ];
+  });
 
   # NICs: eno1 = onboard I219-LM (e1000e) — Intel AMT lives here, so it must only ever face the LAN.
   #       enp2s0 = I225 2.5GbE (igc) — the natural WAN port when this becomes the router.
@@ -52,6 +70,9 @@
   nix.settings = {
     experimental-features = [ "nix-command" "flakes" ];
     trusted-users = [ "@wheel" ];
+    # a hung cache download once stalled a rebuild for 10+ min; fail fast and retry instead
+    connect-timeout = 10;
+    stalled-download-timeout = 60;
   };
   nix.gc = {
     automatic = true;
@@ -60,7 +81,7 @@
   };
 
   environment.systemPackages = with pkgs; [
-    git vim htop btop curl dig tcpdump ethtool pciutils usbutils smartmontools
+    git vim htop btop curl dig tcpdump ethtool pciutils usbutils smartmontools rsync nfs-utils
   ];
 
   system.stateVersion = "26.05";

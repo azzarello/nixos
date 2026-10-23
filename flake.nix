@@ -18,6 +18,8 @@
         ./hosts/breaker/disko.nix
         ./hosts/breaker/hardware-configuration.nix
         ./hosts/breaker/configuration.nix
+        ./modules/k3s.nix
+        ./modules/zfs-datasets.nix
       ];
     };
   };

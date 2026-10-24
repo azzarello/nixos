@@ -38,7 +38,7 @@
   # fridge (Unraid NAS) exports its media + downloads shares to breaker only (NFS, rw).
   # On-demand automount + nofail: breaker boots and runs fine while fridge is down.
   # Nothing uses these until the stream-tier cutover (local tier on fridge's disks).
-  fileSystems = lib.genAttrs [ "/mnt/fridge/media" "/mnt/fridge/downloads" ] (mnt: {
+  fileSystems = lib.genAttrs [ "/mnt/fridge/media" "/mnt/fridge/downloads" "/mnt/fridge/backups" ] (mnt: {
     device = "192.168.68.67:/mnt/user/${baseNameOf mnt}";
     fsType = "nfs";
     options = [ "nfsvers=4.2" "noauto" "nofail" "x-systemd.automount" "x-systemd.idle-timeout=600"

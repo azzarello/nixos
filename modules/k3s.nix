@@ -10,6 +10,9 @@
       "--write-kubeconfig-group=wheel"
       "--default-local-storage-path=/pantry/k3s/local-path"
       "--tls-san=breaker"
+      # The host runs its own edge Traefik (hostNetwork :80/:443, sees real client IPs); the
+      # bundled one's ServiceLB would DNAT 80/443 away from it.
+      "--disable=traefik"
     ];
   };
 

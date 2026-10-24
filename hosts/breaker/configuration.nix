@@ -76,6 +76,8 @@
     '';
   };
   networking.firewall.enable = true;
+  # edge reverse proxy (Traefik, hostNetwork pod) for the LAN; WAN stays closed in router mode
+  networking.firewall.allowedTCPPorts = [ 80 443 ];
 
   # Router role, staged but OFF. Cutover = `router.enable = true` (the breaker-router config
   # in flake.nix) + the runbook in docs/router.md. The LAN keeps today's Deco subnet so

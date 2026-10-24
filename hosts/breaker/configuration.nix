@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 {
   networking.hostName = "breaker";
 
@@ -39,7 +39,8 @@
   # Plain DHCP client for now. Router/DNS roles get their own modules later.
   networking.useNetworkd = true;
   networking.useDHCP = false;
-  networking.interfaces.eno1.useDHCP = true;
+  # DHCP client on eno1 until breaker becomes the router (then eno1 is the static LAN gateway).
+  networking.interfaces.eno1.useDHCP = lib.mkIf (!config.router.enable) true;
   systemd.network.wait-online.anyInterface = true;
 
   # If breaker boots while an AMT SOL/IDE-R session holds the I219's PHY, e1000e can't
@@ -64,6 +65,25 @@
     '';
   };
   networking.firewall.enable = true;
+
+  # Router role, staged but OFF. Cutover = `router.enable = true` (the breaker-router config
+  # in flake.nix) + the runbook in docs/router.md. The LAN keeps today's Deco subnet so
+  # nothing else on the network has to change; the Decos go to access-point mode.
+  router = {
+    wan = "enp2s0";          # I225 2.5GbE -> ISP modem
+    lan = "eno1";            # I219 -> LAN switch/Decos (AMT lives here: LAN-only, never WAN)
+    address = "192.168.68.1";
+    prefixLength = 22;
+    subnet = "192.168.68.0/22";
+    dhcp.pool = "192.168.69.1 - 192.168.70.254";
+    dhcp.reservations = [
+      { mac = "fc:aa:14:97:9b:11"; ip = "192.168.68.67"; hostname = "fridge"; }
+    ];
+    # AMT (same MAC as eno1) can't get a lease from breaker's own Kea: its DHCP frames go
+    # straight out the PHY, never through the host stack. Give AMT a static IP in MEBx
+    # (192.168.68.71) BEFORE cutover — see docs/router.md.
+    trustedInterfaces = [ "tailscale0" "cni0" "flannel.1" ];
+  };
 
   time.timeZone = "America/Los_Angeles";
   i18n.defaultLocale = "en_US.UTF-8";

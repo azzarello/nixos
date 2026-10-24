@@ -131,7 +131,16 @@
     };
   };
 
-  services.tailscale.enable = true;
+  services.tailscale = {
+    enable = true;
+    # breaker advertises the home LAN to the tailnet (approve in the Tailscale admin), so tailnet
+    # devices reach LAN hosts directly instead of detouring through the NAS (found 2026-10-23: an
+    # iPhone's video stream to breaker went phone -> NAS -> breaker even at home).
+    useRoutingFeatures = "server";
+    extraUpFlags = [ "--advertise-routes=192.168.68.0/22" ];
+    extraSetFlags = [ "--advertise-routes=192.168.68.0/22" ];
+  };
+  monitoring.netdata = { enable = true; interfaces = [ "eno1" "tailscale0" ]; };
   services.fstrim.enable = true;
   # SATA drive temperatures as hwmon sensors (node-exporter -> temp alerts / dashboards)
   boot.kernelModules = [ "drivetemp" ];

@@ -118,6 +118,8 @@
 
   services.tailscale.enable = true;
   services.fstrim.enable = true;
+  # SATA drive temperatures as hwmon sensors (node-exporter -> temp alerts / dashboards)
+  boot.kernelModules = [ "drivetemp" ];
   hardware.enableRedistributableFirmware = true;
 
   nix.settings = {

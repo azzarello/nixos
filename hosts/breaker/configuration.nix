@@ -15,7 +15,18 @@
   # pantry: SK hynix P31 1TB NVMe, single vdev for now. Add the second drive with:
   #   zpool attach pantry nvme-SHGP31-1000GM-2_AS12T000710902J21 /dev/disk/by-id/<new-nvme>
   boot.zfs.extraPools = [ "pantry" ];
-  zfs.datasets."pantry/k3s" = { mountpoint = "/pantry/k3s"; };   # k3s app state (hostPath dirs)
+  zfs.datasets."pantry" = { mountpoint = "/pantry"; properties."com.sun:auto-snapshot" = "false"; };
+  # k3s app state (hostPath dirs). Auto-snapshotted: the undo button for every app's config/DBs.
+  zfs.datasets."pantry/k3s" = { mountpoint = "/pantry/k3s"; properties."com.sun:auto-snapshot" = "true"; };
+  services.zfs.autoSnapshot = {
+    enable = true;
+    flags = "-k -p --utc";   # keep zero-size snapshots, run in parallel, UTC names
+    frequent = 4;            # 15-min, last hour
+    hourly = 24;
+    daily = 14;
+    weekly = 4;
+    monthly = 6;
+  };
 
   # k3s hostPath volumes live on pantry: never start the cluster before the dataset is there.
   systemd.services.k3s = {

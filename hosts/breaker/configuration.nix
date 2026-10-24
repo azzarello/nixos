@@ -17,6 +17,7 @@
   boot.zfs.extraPools = [ "pantry" ];
   zfs.datasets."pantry" = { mountpoint = "/pantry"; properties."com.sun:auto-snapshot" = "false"; };
   # k3s app state (hostPath dirs). Auto-snapshotted: the undo button for every app's config/DBs.
+  k3s.storagePath = "/pantry/k3s/local-path";
   zfs.datasets."pantry/k3s" = { mountpoint = "/pantry/k3s"; properties."com.sun:auto-snapshot" = "true"; };
   services.zfs.autoSnapshot = {
     enable = true;
@@ -111,26 +112,6 @@
     };
   };
 
-  time.timeZone = "America/Los_Angeles";
-  i18n.defaultLocale = "en_US.UTF-8";
-
-  users.users.corndog = {
-    isNormalUser = true;
-    extraGroups = [ "wheel" ];
-    openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOuPPXrbNYSI9VidTM20hFZOhL/4SklO++MjNbh0WpsZ corndog@mac"
-    ];
-  };
-
-  services.openssh = {
-    enable = true;
-    settings = {
-      PasswordAuthentication = false;
-      KbdInteractiveAuthentication = false;
-      PermitRootLogin = "no";
-    };
-  };
-
   services.tailscale = {
     enable = true;
     # breaker advertises the home LAN to the tailnet (approve in the Tailscale admin), so tailnet
@@ -145,19 +126,6 @@
   # SATA drive temperatures as hwmon sensors (node-exporter -> temp alerts / dashboards)
   boot.kernelModules = [ "drivetemp" ];
   hardware.enableRedistributableFirmware = true;
-
-  nix.settings = {
-    experimental-features = [ "nix-command" "flakes" ];
-    trusted-users = [ "@wheel" ];
-    # a hung cache download once stalled a rebuild for 10+ min; fail fast and retry instead
-    connect-timeout = 10;
-    stalled-download-timeout = 60;
-  };
-  nix.gc = {
-    automatic = true;
-    dates = "weekly";
-    options = "--delete-older-than 30d";
-  };
 
   environment.systemPackages = with pkgs; [
     git vim htop btop curl dig tcpdump ethtool pciutils usbutils smartmontools rsync nfs-utils

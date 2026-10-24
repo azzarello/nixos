@@ -17,6 +17,7 @@
       ./hosts/breaker/disko.nix
       ./hosts/breaker/hardware-configuration.nix
       ./hosts/breaker/configuration.nix
+      ./modules/common.nix
       ./modules/k3s.nix
       ./modules/zfs-datasets.nix
       ./modules/router.nix
@@ -34,6 +35,7 @@
       system = "x86_64-linux";
       modules = breakerModules ++ [{ router.enable = true; }];
     };
+
 
     checks.x86_64-linux = {
       router = import ./tests/router.nix { inherit pkgs; };

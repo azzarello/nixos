@@ -1,15 +1,22 @@
-# Single-node k3s. App state lives on the ZFS pool (hostPath dirs under /pantry/k3s),
-# the k3s data dir (images, containerd) stays on the boot SSD.
-{ config, pkgs, ... }:
+# Single-node k3s (one independent cluster per host). App state lives under
+# k3s.storagePath (breaker: the ZFS pool), the k3s data dir (images, containerd) stays on the boot disk.
+{ config, lib, pkgs, ... }:
 {
+  options.k3s.storagePath = lib.mkOption {
+    type = lib.types.str;
+    default = "/var/lib/k3s-storage";
+    description = "Default local-path provisioner directory (app PVCs).";
+  };
+
+  config = {
   services.k3s = {
     enable = true;
     role = "server";
     extraFlags = [
       "--write-kubeconfig-mode=0640"
       "--write-kubeconfig-group=wheel"
-      "--default-local-storage-path=/pantry/k3s/local-path"
-      "--tls-san=breaker"
+      "--default-local-storage-path=${config.k3s.storagePath}"
+      "--tls-san=${config.networking.hostName}"
       # The host runs its own edge Traefik (hostNetwork :80/:443, sees real client IPs); the
       # bundled one's ServiceLB would DNAT 80/443 away from it.
       "--disable=traefik"
@@ -56,4 +63,5 @@
 
   environment.variables.KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
   environment.systemPackages = with pkgs; [ kubectl kubernetes-helm k9s ];
+  };
 }

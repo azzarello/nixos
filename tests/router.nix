@@ -85,7 +85,11 @@ pkgs.testers.runNixOSTest {
             dns.bootstrap = [ "10.99.0.1" ];
           };
           # The test VMs have no internet: no filter-list downloads.
-          services.adguardhome.settings.filters = lib.mkForce [ ];
+          router.dns.filters = [ ];
+          # exercise the typed DNS options
+          router.dns.rewrites = [{ domain = "nas.example.home"; answer = "10.88.0.50"; }];
+          router.dns.userRules = [ "||blocked.example.test^" ];
+          router.dns.clients = [{ name = "speaker"; ids = [ "02:00:00:00:00:77" ]; filtering = false; }];
           environment.systemPackages = [ pkgs.iptables pkgs.dig ];
         }
         (lib.mkIf withK3s {
@@ -138,6 +142,9 @@ pkgs.testers.runNixOSTest {
         client.wait_until_succeeds("dig +short @10.88.0.1 example.test | grep -qx 10.99.0.1")
         client.succeed("dig +short @10.88.0.1 fridge.lan | grep -qx 10.88.0.50")
         client.succeed("dig +short @10.88.0.1 router.lan | grep -qx 10.88.0.1")
+        client.succeed("dig +short @10.88.0.1 nas.example.home | grep -qx 10.88.0.50")
+        # user rule blocks it (AdGuard answers 0.0.0.0 for blocked names)
+        client.succeed("dig +short @10.88.0.1 blocked.example.test | grep -qx 0.0.0.0")
         # the DHCP-advertised resolver is the router
         client.wait_until_succeeds("resolvectl dns eth1 | grep -q 10.88.0.1")
 

@@ -94,6 +94,19 @@
     # straight out the PHY, never through the host stack. Give AMT a static IP in MEBx
     # (192.168.68.71) BEFORE cutover — see docs/router.md.
     trustedInterfaces = [ "tailscale0" "cni0" "flannel.1" ];
+    # Same blocklists/rules as the NAS's AdGuard today (rewrites + named clients are private).
+    dns = {
+      upstreams = [ "https://dns10.quad9.net/dns-query" "https://cloudflare-dns.com/dns-query" ];
+      bootstrap = [ "9.9.9.10" "149.112.112.10" ];
+      filters = [
+        { name = "AdGuard DNS filter"; url = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"; }
+        { name = "AdAway Default Blocklist"; url = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt"; }
+        { name = "Peter Lowe's List"; url = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_3.txt"; }
+        { name = "Hagezi DNS - Pro"; url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt"; }
+        { name = "OISD Big"; url = "https://big.oisd.nl"; }
+      ];
+      userRules = [ "||bytewlb.akadns.net^" "@@||msmetrics.ws.sonos.com^" ];
+    };
   };
 
   time.timeZone = "America/Los_Angeles";

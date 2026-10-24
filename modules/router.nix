@@ -41,6 +41,29 @@ in
         default = [ "https://dns.quad9.net/dns-query" "https://cloudflare-dns.com/dns-query" ];
       };
       bootstrap = mkOption { type = types.listOf types.str; default = [ "9.9.9.9" "1.1.1.1" ]; };
+      filters = mkOption {
+        description = "Blocklists (AdGuard filter URLs).";
+        type = types.listOf (types.submodule { options = { name = mkOption { type = types.str; }; url = mkOption { type = types.str; }; }; });
+        default = [{ name = "AdGuard DNS filter"; url = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"; }];
+      };
+      userRules = mkOption { type = types.listOf types.str; default = [ ]; description = "AdGuard custom filtering rules."; };
+      rewrites = mkOption {
+        description = "Extra DNS rewrites (domain -> answer), on top of <reservation>.lan and router.lan.";
+        type = types.listOf (types.submodule { options = { domain = mkOption { type = types.str; }; answer = mkOption { type = types.str; }; }; });
+        default = [ ];
+      };
+      clients = mkOption {
+        description = "Named clients (by MAC/IP). filtering = false exempts a device from blocklists.";
+        type = types.listOf (types.submodule { options = {
+          name = mkOption { type = types.str; };
+          ids = mkOption { type = types.listOf types.str; };
+          filtering = mkOption { type = types.bool; default = true; };
+        }; });
+        default = [ ];
+      };
+      dnssec = mkOption { type = types.bool; default = true; };
+      cacheSize = mkOption { type = types.int; default = 4194304; };
+      upstreamMode = mkOption { type = types.enum [ "load_balance" "parallel" "fastest_addr" ]; default = "load_balance"; };
     };
     trustedInterfaces = mkOption {
       type = types.listOf types.str;
@@ -133,6 +156,9 @@ in
           port = 53;
           upstream_dns = cfg.dns.upstreams;
           bootstrap_dns = cfg.dns.bootstrap;
+          upstream_mode = cfg.dns.upstreamMode;
+          enable_dnssec = cfg.dns.dnssec;
+          cache_size = cfg.dns.cacheSize;
           # Lesson from fridge (2026-10-23): AdGuard's default per-/24 ratelimit made the whole
           # LAN share one 100 qps budget and silently dropped queries. A router serves its LAN.
           ratelimit = 0;
@@ -140,10 +166,18 @@ in
           local_ptr_upstreams = [ ];
         };
         filtering.rewrites = map (r: { domain = "${r.hostname}.lan"; answer = r.ip; enabled = true; }) cfg.dhcp.reservations
-          ++ [{ domain = "router.lan"; answer = cfg.address; enabled = true; }];
-        filters = [
-          { enabled = true; url = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"; name = "AdGuard DNS filter"; id = 1; }
-        ];
+          ++ [{ domain = "router.lan"; answer = cfg.address; enabled = true; }]
+          ++ map (r: r // { enabled = true; }) cfg.dns.rewrites;
+        filters = lib.imap1 (i: f: { enabled = true; inherit (f) url name; id = i; }) cfg.dns.filters;
+        user_rules = cfg.dns.userRules;
+        clients.persistent = map (c: {
+          inherit (c) name ids;
+          use_global_settings = c.filtering;
+          filtering_enabled = c.filtering;
+          parental_enabled = false;
+          safebrowsing_enabled = false;
+          use_global_blocked_services = true;
+        }) cfg.dns.clients;
       };
     };
     # AdGuard must start after the LAN address exists.

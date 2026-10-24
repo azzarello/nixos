@@ -36,6 +36,7 @@
 
     checks.x86_64-linux = {
       router = import ./tests/router.nix { inherit pkgs; };
+      router-k3s = import ./tests/router.nix { inherit pkgs; withK3s = true; };
       # the cutover config must at least build
       breaker-router = self.nixosConfigurations.breaker-router.config.system.build.toplevel;
     };

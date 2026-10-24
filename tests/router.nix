@@ -1,8 +1,35 @@
 # VM test for modules/router.nix:  isp (fake upstream) <-vlan1-> router <-vlan2-> client
 #   nix build .#checks.x86_64-linux.router        (needs KVM; run it on breaker)
-{ pkgs, ... }:
+#   nix build .#checks.x86_64-linux.router-k3s    (+ real k3s/ServiceLB on the router, heavier)
+{ pkgs, withK3s ? false, ... }:
+let
+  # A LoadBalancer Service the way the real apps are exposed (k3s ServiceLB / klipper-lb).
+  webManifest = pkgs.writeText "web.yaml" ''
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata: {name: web}
+    spec:
+      selector: {matchLabels: {app: web}}
+      template:
+        metadata: {labels: {app: web}}
+        spec:
+          containers:
+            - name: web
+              image: rancher/mirrored-library-busybox:1.37.0
+              imagePullPolicy: Never
+              command: [sh, -c, "echo hello-from-pod > /tmp/index.html && exec httpd -f -p 8080 -h /tmp"]
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata: {name: web}
+    spec:
+      type: LoadBalancer
+      selector: {app: web}
+      ports: [{port: 8088, targetPort: 8080}]
+  '';
+in
 pkgs.testers.runNixOSTest {
-  name = "router";
+  name = if withK3s then "router-k3s" else "router";
 
   nodes = {
     # Fake ISP: DHCP for the router's WAN, a DNS zone, and a web server that echoes the
@@ -37,26 +64,40 @@ pkgs.testers.runNixOSTest {
     };
 
     router = { lib, ... }: {
-      imports = [ ../modules/router.nix ];
-      virtualisation.vlans = [ 1 2 ];
-      networking.interfaces.eth1.ipv4.addresses = lib.mkForce [ ];   # WAN: DHCP only
-      networking.interfaces.eth2.ipv4.addresses = lib.mkForce [{ address = "10.88.0.1"; prefixLength = 24; }];
-      services.openssh.enable = true;
-      router = {
-        enable = true;
-        wan = "eth1";
-        lan = "eth2";
-        address = "10.88.0.1";
-        prefixLength = 24;
-        subnet = "10.88.0.0/24";
-        dhcp.pool = "10.88.0.100 - 10.88.0.200";
-        dhcp.reservations = [{ mac = "02:00:00:00:00:99"; ip = "10.88.0.50"; hostname = "fridge"; }];
-        dns.upstreams = [ "10.99.0.1" ];
-        dns.bootstrap = [ "10.99.0.1" ];
-      };
-      # The test VMs have no internet: no filter-list downloads.
-      services.adguardhome.settings.filters = lib.mkForce [ ];
-      environment.systemPackages = [ pkgs.iptables pkgs.dig ];
+      imports = [ ../modules/router.nix ] ++ lib.optional withK3s ../modules/k3s.nix;
+      # mkMerge/mkIf, not `//`: a shallow merge would replace the whole `router` attrset.
+      config = lib.mkMerge [
+        {
+          virtualisation.vlans = [ 1 2 ];
+          networking.interfaces.eth1.ipv4.addresses = lib.mkForce [ ];   # WAN: DHCP only
+          networking.interfaces.eth2.ipv4.addresses = lib.mkForce [{ address = "10.88.0.1"; prefixLength = 24; }];
+          services.openssh.enable = true;
+          router = {
+            enable = true;
+            wan = "eth1";
+            lan = "eth2";
+            address = "10.88.0.1";
+            prefixLength = 24;
+            subnet = "10.88.0.0/24";
+            dhcp.pool = "10.88.0.100 - 10.88.0.200";
+            dhcp.reservations = [{ mac = "02:00:00:00:00:99"; ip = "10.88.0.50"; hostname = "fridge"; }];
+            dns.upstreams = [ "10.99.0.1" ];
+            dns.bootstrap = [ "10.99.0.1" ];
+          };
+          # The test VMs have no internet: no filter-list downloads.
+          services.adguardhome.settings.filters = lib.mkForce [ ];
+          environment.systemPackages = [ pkgs.iptables pkgs.dig ];
+        }
+        (lib.mkIf withK3s {
+          # the real k3s module, with its images preloaded (no registry access in the sandbox)
+          services.k3s.images = [ pkgs.k3s.passthru.airgap-images ];
+          services.k3s.extraFlags = [ "--disable=traefik,metrics-server,local-storage" ];
+          router.trustedInterfaces = [ "cni0" "flannel.1" ];
+          virtualisation.memorySize = 3072;
+          virtualisation.diskSize = 6144;
+          virtualisation.cores = 2;
+        })
+      ];
     };
 
     client = { lib, ... }: {
@@ -122,5 +163,21 @@ pkgs.testers.runNixOSTest {
         isp.succeed(f"curl -sf -m 5 http://{wan_ip}:9999/hostname")
         router.succeed("iptables -t mangle -I PREROUTING -i eth1 -j router-wan-in")
         isp.fail(f"curl -sf -m 5 http://{wan_ip}:9999/hostname")
+  '' + pkgs.lib.optionalString withK3s ''
+
+    with subtest("real k3s ServiceLB: LAN reaches the LoadBalancer port, WAN does not"):
+        router.wait_for_unit("k3s.service")
+        router.wait_until_succeeds("kubectl get node -o name | grep -q node/", timeout=300)
+        router.wait_until_succeeds("kubectl wait --for=condition=Ready node --all --timeout=10s", timeout=300)
+        router.succeed("kubectl apply -f ${webManifest}")
+        router.wait_until_succeeds("kubectl get pods -l app=web -o jsonpath={.items[0].status.phase} | grep -qx Running", timeout=300)
+        router.wait_until_succeeds("kubectl -n kube-system get pods -l svccontroller.k3s.cattle.io/svcname=web -o jsonpath={.items[0].status.phase} | grep -qx Running", timeout=300)
+        client.wait_until_succeeds("curl -sf -m 5 http://10.88.0.1:8088/ | grep -q hello-from-pod", timeout=120)
+        isp.fail(f"curl -sf -m 5 http://{wan_ip}:8088/")
+        # control: without the WAN drop, ServiceLB WOULD expose it on the WAN address
+        router.succeed("iptables -t mangle -D PREROUTING -i eth1 -j router-wan-in")
+        isp.wait_until_succeeds(f"curl -sf -m 5 http://{wan_ip}:8088/ | grep -q hello-from-pod", timeout=60)
+        router.succeed("iptables -t mangle -I PREROUTING -i eth1 -j router-wan-in")
+        isp.fail(f"curl -sf -m 5 http://{wan_ip}:8088/")
   '';
 }

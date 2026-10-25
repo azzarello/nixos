@@ -19,6 +19,9 @@
   # k3s app state (hostPath dirs). Auto-snapshotted: the undo button for every app's config/DBs.
   k3s.storagePath = "/pantry/k3s/local-path";
   zfs.datasets."pantry/k3s" = { mountpoint = "/pantry/k3s"; properties."com.sun:auto-snapshot" = "true"; };
+  # Caches apps rewrite constantly (e.g. a streaming VFS cache): never snapshotted. Inside pantry/k3s
+  # every evicted chunk stayed pinned by the 15-min/hourly/daily snapshots (300 GB, 2026-10-25).
+  zfs.datasets."pantry/cache" = { mountpoint = "/pantry/cache"; properties."com.sun:auto-snapshot" = "false"; };
   services.zfs.autoSnapshot = {
     enable = true;
     flags = "-k -p --utc";   # keep zero-size snapshots, run in parallel, UTC names

@@ -12,6 +12,9 @@
   boot.zfs.forceImportRoot = false;
   networking.hostId = "0dd18c00";
   services.zfs.autoScrub.enable = true;
+  # ARC cap 24 GiB (default: half of RAM, and it grew to ~40 GiB). Guarantees RAM for a VM on the
+  # host without waiting on ARC to shrink under pressure; pods use ~8 GiB.
+  boot.extraModprobeConfig = "options zfs zfs_arc_max=${toString (24 * 1024 * 1024 * 1024)}";
   # pantry: SK hynix P31 1TB NVMe, single vdev for now. Add the second drive with:
   #   zpool attach pantry nvme-SHGP31-1000GM-2_AS12T000710902J21 /dev/disk/by-id/<new-nvme>
   boot.zfs.extraPools = [ "pantry" ];

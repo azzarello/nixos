@@ -126,6 +126,16 @@
   };
   monitoring.glances = { enable = true; interfaces = [ "eno1" "tailscale0" ]; };
   services.fstrim.enable = true;
+  # Idle power (measured 2026-10-25 with turbostat SysWatt, 30 s windows): powertop's tunables (runtime PM for
+  # idle PCI/SATA/USB devices, audio codec power save, NMI watchdog off, 15 s writeback) took the platform
+  # from ~7.2 W to ~6.0-6.3 W and the package from PC2 into PC7/PC9 more often. EPP balance_power and
+  # unloading Wi-Fi/BT were within noise (+-0.4 W), so left alone.
+  powerManagement.powertop.enable = true;
+  # ...except eno1 (I219-LM, e1000e): it carries AMT and has had link-speed trouble (eno1-gigabit below);
+  # runtime PM saves nothing on a link that is always up.
+  systemd.services.powertop.postStart = ''
+    echo on > /sys/bus/pci/devices/0000:00:1f.6/power/control
+  '';
   # SATA drive temperatures as hwmon sensors (node-exporter -> temp alerts / dashboards)
   boot.kernelModules = [ "drivetemp" ];
   hardware.enableRedistributableFirmware = true;

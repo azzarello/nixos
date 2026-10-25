@@ -91,6 +91,7 @@
 <script>
 const API = "/api/4/", EVERY = 3000, HIST = 60;
 const hist = { cpu: [], mem: [] };
+let lastK3s = "";
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const gb = b => (b / 2 ** 30).toFixed(b >= 10 * 2 ** 30 ? 0 : 1) + "G";
@@ -111,7 +112,8 @@ async function get(p) { const r = await fetch(API + p, { cache: "no-store" }); i
 function renderK3s(text) {
   // k3s-glance.service output: "ZFS ARC …", "pods N, not ready M", "  ns/pod …" (not-ready lines),
   // "top pods by memory (cpu, mem):", then "  ns  name  cpu  mem" rows.
-  if (!text) { $("k3s").innerHTML = '<div class="empty">no summary yet</div>'; return; }
+  if (!text) { if (!lastK3s) $("k3s").innerHTML = '<div class="empty">no summary yet</div>'; return; }   // keep the last good one
+  lastK3s = text;
   const lines = text.split("\n"); let html = "", top = false;
   for (const l of lines) {
     let m;
@@ -125,7 +127,7 @@ function renderK3s(text) {
   $("k3s").innerHTML = html || '<div class="empty">no pods</div>';
 }
 
-const SENSOR_NAMES = { "Package id 0": "CPU package", "Composite": "NVMe", "drivetemp 0": "SATA SSD", "pch_cometlake 0": "Chipset" };
+const SENSOR_NAMES = { "Package id 0": "CPU package", "Composite": "NVMe", "drivetemp 0": "SATA SSD <small>self-reported</small>", "pch_cometlake 0": "Chipset" };
 
 async function tick() {
   try {
@@ -162,8 +164,9 @@ async function tick() {
       `<div class="row"><div class="n">${esc(n.alias || n.interface_name)}</div><div class="r">↓ <b>${rate(n.bytes_recv_rate_per_sec || 0)}</b> ↑ <b>${rate(n.bytes_sent_rate_per_sec || 0)}</b></div></div>`
     ).join("") || '<div class="empty">no traffic</div>';
 
-    const seen = new Set();   // btrfs subvolumes share one pool: show each device once
-    $("fs").innerHTML = fs.filter(f => !seen.has(f.device_name) && seen.add(f.device_name)).map(f =>
+    // btrfs subvolumes share one device: show each once; skip empty ZFS parents (/pantry)
+    const seen = new Set();
+    $("fs").innerHTML = fs.filter(f => f.used >= 2 ** 30 && !seen.has(f.device_name) && seen.add(f.device_name)).map(f =>
       `<div class="row" style="border:0;padding-bottom:0"><div class="n">${esc(f.mnt_point)} <small>${esc(f.fs_type)}</small></div><div class="r"><b>${gb(f.used)}</b> / ${gb(f.size)}</div></div>${meter(f.percent)}`
     ).join("");
 

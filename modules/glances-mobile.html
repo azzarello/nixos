@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1115">
+<title>Host Glance</title>
+<!-- Phone-first view of the Glances REST API (same origin: served from Glances' /static).
+     Shipped by modules/glances.nix; Traefik sends phones here. Full UI: /?full=1 -->
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --fg: #15171c; --muted: #6b7280; --line: #e5e7eb;
+    --bar: #e9ebef; --ok: #16a34a; --warn: #d97706; --crit: #dc2626; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --card: #181b21; --fg: #e8eaee; --muted: #8b93a1; --line: #262a32;
+      --bar: #262a32; --ok: #22c55e; --warn: #f59e0b; --crit: #ef4444; --accent: #60a5fa;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --card: #181b21; --fg: #e8eaee; --muted: #8b93a1; --line: #262a32;
+    --bar: #262a32; --ok: #22c55e; --warn: #f59e0b; --crit: #ef4444; --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(12px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    max-width: 640px; margin: 0 auto; -webkit-text-size-adjust: 100%;
+  }
+  header { display: flex; align-items: baseline; gap: 8px; margin: 4px 2px 12px; }
+  header h1 { font-size: 22px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 13px; flex: 1; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); align-self: center; }
+  .dot.live { background: var(--ok); } .dot.stale { background: var(--crit); }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .tile, .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+  .tile { padding: 10px 12px 8px; min-width: 0; }
+  .tile .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .d { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile svg { display: block; width: 100%; height: 28px; margin-top: 4px; }
+  .card { padding: 10px 12px; margin-bottom: 10px; }
+  .card h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
+             margin: 0 0 6px; display: flex; justify-content: space-between; font-weight: 600; }
+  .card h2 span { text-transform: none; letter-spacing: 0; }
+  .row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0;
+         border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .row:first-of-type { border-top: 0; }
+  .row .n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .n small { color: var(--muted); }
+  .row .r { white-space: nowrap; color: var(--muted); }
+  .row .r b { color: var(--fg); font-weight: 600; }
+  .meter { height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; margin: 2px 0 6px; }
+  .meter i { display: block; height: 100%; background: var(--accent); }
+  .ok { color: var(--ok) !important; } .warn { color: var(--warn) !important; } .crit { color: var(--crit) !important; }
+  .meter i.warn { background: var(--warn); } .meter i.crit { background: var(--crit); }
+  .bad { color: var(--crit); font-size: 13px; padding: 3px 0; word-break: break-all; }
+  .empty { color: var(--muted); font-size: 13px; }
+  #alerts:empty { display: none; }
+  footer { text-align: center; margin-top: 14px; font-size: 13px; }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="host">breaker</h1>
+  <div class="sub" id="uptime"></div>
+  <div class="dot" id="dot" title="live"></div>
+</header>
+
+<div class="tiles">
+  <div class="tile"><div class="k">CPU</div><div class="v" id="cpu">–</div><div class="d" id="cpud"></div><svg id="cpus" viewBox="0 0 60 28" preserveAspectRatio="none"></svg></div>
+  <div class="tile"><div class="k">Memory</div><div class="v" id="mem">–</div><div class="d" id="memd"></div><svg id="mems" viewBox="0 0 60 28" preserveAspectRatio="none"></svg></div>
+  <div class="tile"><div class="k">Load</div><div class="v" id="load">–</div><div class="d" id="loadd"></div></div>
+  <div class="tile"><div class="k">CPU temp</div><div class="v" id="temp">–</div><div class="d" id="tempd"></div></div>
+</div>
+
+<div class="card" id="alerts"></div>
+<div class="card"><h2>k3s <span id="pods"></span></h2><div id="k3s" class="empty">loading…</div></div>
+<div class="card"><h2>Network</h2><div id="net"></div></div>
+<div class="card"><h2>Storage</h2><div id="fs"></div></div>
+<div class="card"><h2>Temperatures</h2><div id="sensors"></div></div>
+<div class="card"><h2>Top processes</h2><div id="procs"></div></div>
+
+<footer><a href="/?full=1">Full Glances view</a></footer>
+
+<script>
+const API = "/api/4/", EVERY = 3000, HIST = 60;
+const hist = { cpu: [], mem: [] };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const gb = b => (b / 2 ** 30).toFixed(b >= 10 * 2 ** 30 ? 0 : 1) + "G";
+const rate = b => b >= 1e9 ? (b / 1e9).toFixed(1) + " GB/s" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB/s"
+                 : b >= 1e3 ? (b / 1e3).toFixed(0) + " kB/s" : Math.round(b) + " B/s";
+const lvl = (v, w, c) => v >= c ? "crit" : v >= w ? "warn" : "";
+
+function spark(id, arr) {
+  if (arr.length < 2) return;
+  const pts = arr.map((v, i) => `${(i * 60 / (HIST - 1)).toFixed(1)},${(27 - v * .26).toFixed(1)}`);
+  $(id).innerHTML = `<polyline points="${pts.join(" ")}" fill="none" stroke="var(--accent)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+}
+const push = (k, v) => { hist[k].push(v); if (hist[k].length > HIST) hist[k].shift(); };
+const meter = (pct, cls = lvl(pct, 75, 90)) => `<div class="meter"><i class="${cls}" style="width:${Math.min(100, pct)}%"></i></div>`;
+
+async function get(p) { const r = await fetch(API + p, { cache: "no-store" }); if (!r.ok) throw new Error(p + " " + r.status); return r.json(); }
+
+function renderK3s(text) {
+  // k3s-glance.service output: "ZFS ARC …", "pods N, not ready M", "  ns/pod …" (not-ready lines),
+  // "top pods by memory (cpu, mem):", then "  ns  name  cpu  mem" rows.
+  if (!text) { $("k3s").innerHTML = '<div class="empty">no summary yet</div>'; return; }
+  const lines = text.split("\n"); let html = "", top = false;
+  for (const l of lines) {
+    let m;
+    if ((m = l.match(/^pods (\d+), not ready (\d+)/))) {
+      $("pods").innerHTML = `${m[1]} pods · <b class="${+m[2] ? "crit" : "ok"}">${+m[2] ? m[2] + " not ready" : "all ready"}</b>`;
+    } else if (l.startsWith("top pods")) { top = true; }
+    else if (top && (m = l.trim().match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$/))) {
+      html += `<div class="row"><div class="n">${esc(m[2])} <small>${esc(m[1])}</small></div><div class="r">${esc(m[3])} · <b>${esc(m[4].replace("Mi", " MiB"))}</b></div></div>`;
+    } else if (!top && l.startsWith("  ")) { html = `<div class="bad">${esc(l.trim())}</div>` + html; }
+  }
+  $("k3s").innerHTML = html || '<div class="empty">no pods</div>';
+}
+
+const SENSOR_NAMES = { "Package id 0": "CPU package", "Composite": "NVMe", "drivetemp 0": "SATA SSD", "pch_cometlake 0": "Chipset" };
+
+async function tick() {
+  try {
+    const [up, cpu, mem, load, sensors, net, fs, amps, procs, alerts] = await Promise.all(
+      ["uptime", "cpu", "mem", "load", "sensors", "network", "fs", "amps", "processlist/top/5", "alert"].map(get));
+
+    $("uptime").textContent = "up " + up.replace(/:\d\d$/, "");
+    $("cpu").textContent = cpu.total.toFixed(0) + "%"; $("cpu").className = "v " + lvl(cpu.total, 70, 90);
+    $("cpud").textContent = `${cpu.cpucore} threads · iowait ${cpu.iowait.toFixed(1)}%`;
+    push("cpu", cpu.total); spark("cpus", hist.cpu);
+
+    const used = mem.total - mem.available, mpct = 100 * used / mem.total;
+    $("mem").textContent = mpct.toFixed(0) + "%"; $("mem").className = "v " + lvl(mpct, 80, 92);
+    $("memd").textContent = `${gb(used)} of ${gb(mem.total)} · cache ${gb(mem.cached)}`;
+    push("mem", mpct); spark("mems", hist.mem);
+
+    $("load").textContent = load.min1.toFixed(2); $("load").className = "v " + lvl(load.min1 / load.cpucore, .7, 1);
+    $("loadd").textContent = `5m ${load.min5.toFixed(2)} · 15m ${load.min15.toFixed(2)} · /${load.cpucore}`;
+
+    const temps = sensors.filter(s => s.unit === "C");
+    const pkg = temps.find(s => s.label === "Package id 0");
+    const cores = temps.filter(s => /^Core \d+/.test(s.label));
+    if (pkg) {
+      $("temp").textContent = pkg.value + "°"; $("temp").className = "v " + lvl(pkg.value, pkg.warning || 80, pkg.critical || 100);
+      $("tempd").textContent = cores.length ? `hottest core ${Math.max(...cores.map(c => c.value))}°` : "";
+    }
+    $("sensors").innerHTML = temps.filter(s => SENSOR_NAMES[s.label]).map(s => {
+      const w = s.warning && s.warning < 200 ? s.warning : 80, c = s.critical && s.critical < 200 ? s.critical : 95;
+      return `<div class="row"><div class="n">${SENSOR_NAMES[s.label]}</div><div class="r"><b class="${lvl(s.value, w, c)}">${s.value}°C</b></div></div>`;
+    }).join("") + (sensors.filter(s => s.unit !== "C" && s.value).map(s =>
+      `<div class="row"><div class="n">${esc(s.label)}</div><div class="r"><b>${esc(s.value)} ${esc(s.unit)}</b></div></div>`).join(""));
+
+    $("net").innerHTML = net.filter(n => n.bytes_all_gauge > 0).map(n =>
+      `<div class="row"><div class="n">${esc(n.alias || n.interface_name)}</div><div class="r">↓ <b>${rate(n.bytes_recv_rate_per_sec || 0)}</b> ↑ <b>${rate(n.bytes_sent_rate_per_sec || 0)}</b></div></div>`
+    ).join("") || '<div class="empty">no traffic</div>';
+
+    const seen = new Set();   // btrfs subvolumes share one pool: show each device once
+    $("fs").innerHTML = fs.filter(f => !seen.has(f.device_name) && seen.add(f.device_name)).map(f =>
+      `<div class="row" style="border:0;padding-bottom:0"><div class="n">${esc(f.mnt_point)} <small>${esc(f.fs_type)}</small></div><div class="r"><b>${gb(f.used)}</b> / ${gb(f.size)}</div></div>${meter(f.percent)}`
+    ).join("");
+
+    const k3s = amps.find(a => a.name === "K3s"); renderK3s(k3s && k3s.result);
+
+    $("procs").innerHTML = procs.map(p =>
+      `<div class="row"><div class="n">${esc(p.name)} <small>${esc(p.username)}</small></div><div class="r"><b>${p.cpu_percent.toFixed(0)}%</b> · ${gb(p.memory_info.rss)}</div></div>`
+    ).join("");
+
+    const live = alerts.filter(a => a.end === -1 || a.end == null);
+    $("alerts").innerHTML = live.length ? "<h2>Alerts</h2>" + live.map(a =>
+      `<div class="row"><div class="n ${a.state === "CRITICAL" ? "crit" : "warn"}">${esc(a.type)} ${esc(a.state)}</div><div class="r">max <b>${esc(typeof a.max === "number" ? a.max.toFixed(1) : a.max)}</b></div></div>`).join("") : "";
+
+    $("dot").className = "dot live";
+  } catch (e) {
+    $("dot").className = "dot stale"; $("dot").title = String(e);
+  }
+}
+
+let timer;
+function start() { clearInterval(timer); tick(); timer = setInterval(tick, EVERY); }
+document.addEventListener("visibilitychange", () => document.hidden ? clearInterval(timer) : start());
+start();
+</script>
+</body>
+</html>

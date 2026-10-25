@@ -5,6 +5,10 @@
 # Glances can't see containerd, so k3s shows up as an AMP panel: a root loop writes a pod summary
 # (not-ready pods, top pods by memory, ZFS ARC) to /run/k3s-glance/summary.txt and Glances cats it.
 # Glances itself stays a DynamicUser with no cluster credentials.
+#
+# Phones: glances-mobile.html is added to Glances' own /static (same origin as its API) and served at
+# /static/m.html; the stock UI hides disks/network/sensors below 768 px. The reverse proxy can send
+# phone user agents from / to it (full UI stays at /?full=1).
 { config, lib, pkgs, ... }:
 let
   cfg = config.monitoring.glances;
@@ -57,6 +61,12 @@ in {
   config = lib.mkIf cfg.enable {
     services.glances = {
       enable = true;
+      package = pkgs.glances.overridePythonAttrs (old: {
+        postInstall = (old.postInstall or "") + ''
+          install -m644 ${./glances-mobile.html} "$(echo $out/lib/python*/site-packages/glances/outputs/static/public)/m.html"
+        '';
+        doCheck = false;   # only a static file added; upstream's tests already ran on the base package
+      });
       extraArgs = [ "--webserver" "-C" "${conf}" ];
     };
 
@@ -71,7 +81,7 @@ in {
         out=${summary}
         while :; do
           {
-            awk '$1=="size" {printf "ZFS ARC %.1fG (counted as used memory above; yields to apps)\n", $3/2^30}' \
+            awk '$1=="size" {printf "ZFS ARC %.1fG (in cache, not used memory)\n", $3/2^30}' \
               /proc/spl/kstat/zfs/arcstats 2>/dev/null
             kubectl get pods -A --no-headers | awk '
               { n++; split($3, r, "/")

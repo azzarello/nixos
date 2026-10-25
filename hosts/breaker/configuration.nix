@@ -121,7 +121,7 @@
     extraUpFlags = [ "--advertise-routes=192.168.68.0/22" ];
     extraSetFlags = [ "--advertise-routes=192.168.68.0/22" ];
   };
-  monitoring.netdata = { enable = true; interfaces = [ "eno1" "tailscale0" ]; };
+  monitoring.glances = { enable = true; interfaces = [ "eno1" "tailscale0" ]; };
   services.fstrim.enable = true;
   # SATA drive temperatures as hwmon sensors (node-exporter -> temp alerts / dashboards)
   boot.kernelModules = [ "drivetemp" ];

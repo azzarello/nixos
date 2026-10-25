@@ -21,7 +21,7 @@
       ./modules/k3s.nix
       ./modules/zfs-datasets.nix
       ./modules/router.nix
-      ./modules/netdata.nix
+      ./modules/glances.nix
     ];
   in {
     # breaker — HP mini PC. Always-on box: future router, DNS, small services.

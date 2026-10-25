@@ -82,20 +82,21 @@ in {
         cores=$(nproc)
         # RAPL energy counters (root-only since CVE-2020-8694): psys = platform/board, package-0 = CPU+iGPU.
         # Watts = energy delta over the loop interval; counters wrap at max_energy_range_uj.
+        # sets $W (not echoed: a $(...) subshell would lose last[] between calls)
         declare -A last
         watts() {
-          local d=/sys/class/powercap/$1 e r w=""
+          local d=/sys/class/powercap/$1 e r; W=""
           [ -r "$d/energy_uj" ] || return 0
           e=$(cat "$d/energy_uj"); r=$(cat "$d/max_energy_range_uj")
           if [ -n "''${last[$1]:-}" ]; then
             local de=$(( e - ''${last[$1]%:*} )) dt=$(( $(date +%s%N) - ''${last[$1]#*:} ))
             (( de < 0 )) && de=$(( de + r ))
-            w=$(awk -v de="$de" -v dt="$dt" 'BEGIN { printf "%.1f", de * 1000 / dt }')
+            W=$(awk -v de="$de" -v dt="$dt" 'BEGIN { printf "%.1f", de * 1000 / dt }')
           fi
-          last[$1]="$e:$(date +%s%N)"; echo "$w"
+          last[$1]="$e:$(date +%s%N)"
         }
         while :; do
-          psys=$(watts intel-rapl:1); pkg=$(watts intel-rapl:0)
+          watts intel-rapl:1; psys=$W; watts intel-rapl:0; pkg=$W
           {
             [ -n "$psys$pkg" ] && echo "power ''${psys:-?} W platform, ''${pkg:-?} W CPU package (RAPL; wall is a bit higher)"
             awk '$1=="size" {printf "ZFS ARC %.1fG (in cache, not used memory)\n", $3/2^30}' \

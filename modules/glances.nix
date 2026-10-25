@@ -3,7 +3,7 @@
 # Netdata Cloud sign-in on unclaimed agents. LAN/Tailscale only.
 #
 # Glances can't see containerd, so k3s shows up as an AMP panel: a root loop writes a pod summary
-# (not-ready pods, top pods by memory, ZFS ARC) to /run/k3s-glance/summary.txt and Glances cats it.
+# (not-ready pods, top pods by memory, ZFS ARC, RAPL power) to /run/k3s-glance/summary.txt and Glances cats it.
 # Glances itself stays a DynamicUser with no cluster credentials.
 #
 # Phones: glances-mobile.html is added to Glances' own /static (same origin as its API) and served at
@@ -79,8 +79,25 @@ in {
       serviceConfig = { RuntimeDirectory = "k3s-glance"; RuntimeDirectoryMode = "0755"; Restart = "always"; };
       script = ''
         out=${summary}
+        cores=$(nproc)
+        # RAPL energy counters (root-only since CVE-2020-8694): psys = platform/board, package-0 = CPU+iGPU.
+        # Watts = energy delta over the loop interval; counters wrap at max_energy_range_uj.
+        declare -A last
+        watts() {
+          local d=/sys/class/powercap/$1 e r w=""
+          [ -r "$d/energy_uj" ] || return 0
+          e=$(cat "$d/energy_uj"); r=$(cat "$d/max_energy_range_uj")
+          if [ -n "''${last[$1]:-}" ]; then
+            local de=$(( e - ''${last[$1]%:*} )) dt=$(( $(date +%s%N) - ''${last[$1]#*:} ))
+            (( de < 0 )) && de=$(( de + r ))
+            w=$(awk -v de="$de" -v dt="$dt" 'BEGIN { printf "%.1f", de * 1000 / dt }')
+          fi
+          last[$1]="$e:$(date +%s%N)"; echo "$w"
+        }
         while :; do
+          psys=$(watts intel-rapl:1); pkg=$(watts intel-rapl:0)
           {
+            [ -n "$psys$pkg" ] && echo "power ''${psys:-?} W platform, ''${pkg:-?} W CPU package (RAPL; wall is a bit higher)"
             awk '$1=="size" {printf "ZFS ARC %.1fG (in cache, not used memory)\n", $3/2^30}' \
               /proc/spl/kstat/zfs/arcstats 2>/dev/null
             kubectl get pods -A --no-headers | awk '
@@ -88,10 +105,12 @@ in {
                 if (($4 != "Running" && $4 != "Completed") || ($4 == "Running" && r[1] != r[2])) {
                   bad++; list = list sprintf("  %s/%s %s %s restarts=%s\n", $1, $2, $3, $4, $5) } }
               END { printf "pods %d, not ready %d\n%s", n, bad, list }'
-            echo "top pods by memory (cpu, mem):"
-            kubectl top pods -A --no-headers --sort-by=memory | head -12 | awk '
+            # kubectl reports millicores (1000m = one thread): shown as % of the whole box, like the CPU total
+            echo "top pods by memory (cpu % of $cores threads, mem):"
+            kubectl top pods -A --no-headers --sort-by=memory | head -12 | awk -v cores="$cores" '
               { name = $2; sub(/-[a-z0-9]{8,10}-[a-z0-9]{5}$/, "", name); sub(/-[a-z0-9]{5}$/, "", name)
-                printf "  %-11s %-28s %6s %8s\n", $1, substr(name, 1, 28), $3, $4 }'
+                cpu = $3; sub(/m$/, "", cpu); mem = $4; sub(/Mi$/, "", mem)
+                printf "  %-11s %-28s %5.1f%% %5.1fG\n", $1, substr(name, 1, 28), cpu / (cores * 10), mem / 1024 }'
           } > "$out.tmp" 2>&1 && mv "$out.tmp" "$out"
           sleep 15
         done

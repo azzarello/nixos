@@ -77,21 +77,23 @@
   <div class="tile"><div class="k">Memory</div><div class="v" id="mem">–</div><div class="d" id="memd"></div><svg id="mems" viewBox="0 0 60 28" preserveAspectRatio="none"></svg></div>
   <div class="tile"><div class="k">Load</div><div class="v" id="load">–</div><div class="d" id="loadd"></div></div>
   <div class="tile"><div class="k">CPU temp</div><div class="v" id="temp">–</div><div class="d" id="tempd"></div></div>
+  <div class="tile"><div class="k">Power</div><div class="v" id="power">–</div><div class="d" id="powerd">board (RAPL)</div><svg id="pows" viewBox="0 0 60 28" preserveAspectRatio="none"></svg></div>
+  <div class="tile"><div class="k">Pods</div><div class="v" id="podn">–</div><div class="d" id="podd"></div></div>
 </div>
 
 <div class="card" id="alerts"></div>
-<div class="card"><h2>k3s <span id="pods"></span></h2><div id="k3s" class="empty">loading…</div></div>
+<div class="card"><h2>k3s pods <span>CPU % of box · memory</span></h2><div id="k3s" class="empty">loading…</div></div>
 <div class="card"><h2>Network</h2><div id="net"></div></div>
 <div class="card"><h2>Storage</h2><div id="fs"></div></div>
 <div class="card"><h2>Temperatures</h2><div id="sensors"></div></div>
-<div class="card"><h2>Top processes</h2><div id="procs"></div></div>
+<div class="card"><h2>Top processes <span>CPU % of box · memory</span></h2><div id="procs"></div></div>
 
 <footer><a href="/?full=1">Full Glances view</a></footer>
 
 <script>
 const API = "/api/4/", EVERY = 3000, HIST = 60;
-const hist = { cpu: [], mem: [] };
-let lastK3s = "";
+const hist = { cpu: [], mem: [], pow: [] };
+let lastK3s = "", lastPower = "";
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const gb = b => (b / 2 ** 30).toFixed(b >= 10 * 2 ** 30 ? 0 : 1) + "G";
@@ -118,10 +120,14 @@ function renderK3s(text) {
   for (const l of lines) {
     let m;
     if ((m = l.match(/^pods (\d+), not ready (\d+)/))) {
-      $("pods").innerHTML = `${m[1]} pods · <b class="${+m[2] ? "crit" : "ok"}">${+m[2] ? m[2] + " not ready" : "all ready"}</b>`;
+      $("podn").textContent = m[1]; $("podn").className = "v " + (+m[2] ? "crit" : "");
+      $("podd").innerHTML = +m[2] ? `<span class="crit">${m[2]} not ready</span>` : "all ready";
+    } else if ((m = l.match(/^power (\S+) W platform, (\S+) W CPU/))) {
+      $("power").textContent = m[1] + " W"; $("powerd").textContent = `board · CPU pkg ${m[2]} W`;
+      if (!isNaN(+m[1]) && l !== lastPower) { push("pow", Math.min(100, +m[1] * 2)); spark("pows", hist.pow); lastPower = l; }
     } else if (l.startsWith("top pods")) { top = true; }
     else if (top && (m = l.trim().match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$/))) {
-      html += `<div class="row"><div class="n">${esc(m[2])} <small>${esc(m[1])}</small></div><div class="r">${esc(m[3])} · <b>${esc(m[4].replace("Mi", " MiB"))}</b></div></div>`;
+      html += `<div class="row"><div class="n">${esc(m[2])} <small>${esc(m[1])}</small></div><div class="r">${esc(m[3])} · <b>${esc(m[4])}</b></div></div>`;
     } else if (!top && l.startsWith("  ")) { html = `<div class="bad">${esc(l.trim())}</div>` + html; }
   }
   $("k3s").innerHTML = html || '<div class="empty">no pods</div>';
@@ -173,7 +179,7 @@ async function tick() {
     const k3s = amps.find(a => a.name === "K3s"); renderK3s(k3s && k3s.result);
 
     $("procs").innerHTML = procs.map(p =>
-      `<div class="row"><div class="n">${esc(p.name)} <small>${esc(p.username)}</small></div><div class="r"><b>${p.cpu_percent.toFixed(0)}%</b> · ${gb(p.memory_info.rss)}</div></div>`
+      `<div class="row"><div class="n">${esc(p.name)} <small>${esc(p.username)}</small></div><div class="r"><b>${(p.cpu_percent / cpu.cpucore).toFixed(1)}%</b> · ${gb(p.memory_info.rss)}</div></div>`
     ).join("");
 
     const live = alerts.filter(a => a.end === -1 || a.end == null);

@@ -24,6 +24,9 @@
       ./modules/glances.nix
     ];
   in {
+    # breaker's module set, for configs and tests built on top of it (e.g. a private overlay's VM test)
+    nixosModules.breaker = { imports = breakerModules; };
+
     # breaker — HP mini PC. Always-on box: future router, DNS, small services.
     nixosConfigurations.breaker = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";

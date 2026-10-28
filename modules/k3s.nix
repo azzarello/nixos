@@ -20,8 +20,23 @@
       # The host runs its own edge Traefik (hostNetwork :80/:443, sees real client IPs); the
       # bundled one's ServiceLB would DNAT 80/443 away from it.
       "--disable=traefik"
+      "--resolv-conf=/run/k3s/resolv.conf"
     ];
   };
+
+  # Pods (and CoreDNS's upstreams) get the host's nameservers but NOT its search domains. With
+  # Tailscale's "search <tailnet>.ts.net" inherited, ndots:5 sent every external lookup out as
+  # <name>.<tailnet>.ts.net first; public DNS answers that sometimes NOERROR-with-no-records
+  # instead of NXDOMAIN, and musl (Alpine images) stops there: getaddrinfo fails for a real
+  # name (2026-10-28: an app's metadata API lookups failed with ENOTFOUND).
+  # Regenerated on every k3s start; pods take it when they're (re)created.
+  systemd.services.k3s.preStart = ''
+    mkdir -p /run/k3s
+    src=/run/systemd/resolve/resolv.conf; [ -s "$src" ] || src=/etc/resolv.conf
+    ${pkgs.gnugrep}/bin/grep -E '^(nameserver|options)' "$src" | ${pkgs.gnugrep}/bin/grep -vE '^nameserver (127\.|::1)' > /run/k3s/resolv.conf.new || true
+    ${pkgs.gnugrep}/bin/grep -q '^nameserver' /run/k3s/resolv.conf.new || echo 'nameserver 1.1.1.1' >> /run/k3s/resolv.conf.new
+    mv /run/k3s/resolv.conf.new /run/k3s/resolv.conf
+  '';
 
   # API server for kubectl from the LAN / tailnet; pod + overlay traffic is trusted.
   networking.firewall.allowedTCPPorts = [ 6443 ];

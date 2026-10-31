@@ -8,6 +8,16 @@
     description = "Default local-path provisioner directory (app PVCs).";
   };
 
+  options.k3s.podNameservers = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    default = [ ];
+    example = [ "192.168.1.1" ];
+    description = ''
+      Nameservers for pods (and CoreDNS's upstreams) instead of the host's. Set it when the host
+      resolves through a loopback address (e.g. its own DNS server on 127.0.0.1), which pods can't use.
+    '';
+  };
+
   config = {
   services.k3s = {
     enable = true;
@@ -29,8 +39,12 @@
   # <name>.<tailnet>.ts.net first; public DNS answers that sometimes NOERROR-with-no-records
   # instead of NXDOMAIN, and musl (Alpine images) stops there: getaddrinfo fails for a real
   # name (2026-10-28: an app's metadata API lookups failed with ENOTFOUND).
-  # Regenerated on every k3s start; pods take it when they're (re)created.
-  systemd.services.k3s.preStart = ''
+  # Regenerated on every k3s start; pods take it when they're (re)created. A host whose resolver is
+  # loopback-only (a router running its own DNS) sets k3s.podNameservers instead.
+  systemd.services.k3s.preStart = if config.k3s.podNameservers != [ ] then ''
+    mkdir -p /run/k3s
+    printf 'nameserver %s\n' ${lib.escapeShellArgs config.k3s.podNameservers} > /run/k3s/resolv.conf
+  '' else ''
     mkdir -p /run/k3s
     src=/run/systemd/resolve/resolv.conf; [ -s "$src" ] || src=/etc/resolv.conf
     ${pkgs.gnugrep}/bin/grep -E '^(nameserver|options)' "$src" | ${pkgs.gnugrep}/bin/grep -vE '^nameserver (127\.|::1)' > /run/k3s/resolv.conf.new || true

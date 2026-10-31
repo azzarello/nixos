@@ -115,6 +115,18 @@
     };
   };
 
+  # In router mode breaker KEEPS 192.168.68.71 as its own address, next to the gateway address
+  # (.1): k3s's node IP, AMT (same MAC and IP), NFS exports on the NAS that allow .71, and every
+  # config that names .71 keep working through the cutover (and an SSH session to .71 survives it).
+  # .71 is listed first so it stays the primary address: LAN traffic FROM breaker uses it.
+  networking.interfaces.eno1.ipv4.addresses = lib.mkIf config.router.enable (lib.mkBefore [
+    { address = "192.168.68.71"; prefixLength = config.router.prefixLength; }
+  ]);
+  # Pin k3s to .71: by default it takes the default route's interface, which in router mode is the WAN.
+  services.k3s.extraFlags = lib.mkIf config.router.enable [ "--node-ip=192.168.68.71" ];
+  # breaker resolves via its own AdGuard on 127.0.0.1, which pods can't reach: give them the LAN address.
+  k3s.podNameservers = lib.mkIf config.router.enable [ config.router.address ];
+
   services.tailscale = {
     enable = true;
     # breaker advertises the home LAN to the tailnet (approve in the Tailscale admin), so tailnet

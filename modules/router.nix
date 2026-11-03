@@ -47,6 +47,11 @@ in
         default = [{ name = "AdGuard DNS filter"; url = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"; }];
       };
       userRules = mkOption { type = types.listOf types.str; default = [ ]; description = "AdGuard custom filtering rules."; };
+      parentalControl = mkOption { type = types.bool; default = false; description = "AdGuard's parental-control lookup service (adult sites)."; };
+      safeSearch = {
+        enable = mkOption { type = types.bool; default = false; description = "Force safe search on supported search engines."; };
+        youtube = mkOption { type = types.bool; default = false; description = "Also force YouTube Restricted Mode (hides comments and many ordinary videos)."; };
+      };
       rewrites = mkOption {
         description = "Extra DNS rewrites (domain -> answer), on top of <reservation>.lan and router.lan.";
         type = types.listOf (types.submodule { options = { domain = mkOption { type = types.str; }; answer = mkOption { type = types.str; }; }; });
@@ -168,6 +173,12 @@ in
         filtering.rewrites = map (r: { domain = "${r.hostname}.lan"; answer = r.ip; enabled = true; }) cfg.dhcp.reservations
           ++ [{ domain = "router.lan"; answer = cfg.address; enabled = true; }]
           ++ map (r: r // { enabled = true; }) cfg.dns.rewrites;
+        filtering.parental_enabled = cfg.dns.parentalControl;
+        filtering.safe_search = {
+          enabled = cfg.dns.safeSearch.enable;
+          inherit (cfg.dns.safeSearch) youtube;
+          bing = true; duckduckgo = true; ecosia = true; google = true; pixabay = true; yandex = true;
+        };
         filters = lib.imap1 (i: f: { enabled = true; inherit (f) url name; id = i; }) cfg.dns.filters;
         user_rules = cfg.dns.userRules;
         clients.persistent = map (c: {

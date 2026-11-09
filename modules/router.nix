@@ -67,10 +67,17 @@ in
         }; });
         default = [ ];
       };
+      listenAddresses = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "192.168.68.71" ];
+        description = "Extra addresses AdGuard answers on (besides 127.0.0.1 and, in router mode, the router address). Needed for dnsOnly.";
+      };
       dnssec = mkOption { type = types.bool; default = true; };
       cacheSize = mkOption { type = types.int; default = 4194304; };
       upstreamMode = mkOption { type = types.enum [ "load_balance" "parallel" "fastest_addr" ]; default = "load_balance"; };
     };
+    dnsOnly = mkEnableOption "AdGuard Home on its own, without the rest of the router role (a trial run of DNS before the cutover; the LAN keeps its current router and DHCP)";
     wanOpenTcpPorts = mkOption {
       type = types.listOf types.port;
       default = [ ];
@@ -87,7 +94,7 @@ in
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkMerge [ (mkIf cfg.enable {
     boot.kernel.sysctl = {
       "net.ipv4.ip_forward" = 1;
       # IPv6 routing is out of scope for now (docs/router.md): no RA/DHCPv6 on the LAN.
@@ -164,13 +171,15 @@ in
         }];
       };
     };
+  })
 
+  (mkIf (cfg.enable || cfg.dnsOnly) {
     services.adguardhome = {
       enable = true;
       mutableSettings = false;
       settings = {
         dns = {
-          bind_hosts = [ "127.0.0.1" cfg.address ];
+          bind_hosts = [ "127.0.0.1" ] ++ lib.optional cfg.enable cfg.address ++ cfg.dns.listenAddresses;
           port = 53;
           upstream_dns = cfg.dns.upstreams;
           bootstrap_dns = cfg.dns.bootstrap;
@@ -209,5 +218,10 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
     };
-  };
+  })
+
+  (mkIf (cfg.dnsOnly && !cfg.enable) {
+    # answer the LAN on port 53 (the router role opens this itself)
+    networking.firewall.interfaces.${cfg.lan} = { allowedTCPPorts = [ 53 ]; allowedUDPPorts = [ 53 ]; };
+  }) ];
 }

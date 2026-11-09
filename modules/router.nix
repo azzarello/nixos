@@ -2,7 +2,8 @@
 # Home). Off by default (`router.enable`); hosts opt in. Design + cutover runbook: docs/router.md.
 # Tested by tests/router.nix (fake ISP <-> router <-> LAN client VMs).
 #
-# Security model: the WAN side accepts NOTHING unsolicited. Inbound NEW connections on the WAN
+# Security model: the WAN side accepts NOTHING unsolicited, except the TCP ports in `router.wanOpenTcpPorts`
+# (empty by default). Inbound NEW connections on the WAN
 # interface are dropped in mangle/PREROUTING, i.e. BEFORE any DNAT. That matters on a k3s host:
 # ServiceLB/hostPort DNAT matches every local address, so without this every LoadBalancer
 # port would be reachable from the internet even though the INPUT firewall is closed.
@@ -70,6 +71,15 @@ in
       cacheSize = mkOption { type = types.int; default = 4194304; };
       upstreamMode = mkOption { type = types.enum [ "load_balance" "parallel" "fastest_addr" ]; default = "load_balance"; };
     };
+    wanOpenTcpPorts = mkOption {
+      type = types.listOf types.port;
+      default = [ ];
+      example = [ 80 443 ];
+      description = ''
+        TCP ports reachable from the WAN. Empty (the default) keeps the WAN fully closed. The drop runs before
+        DNAT, so a port listed here is open to a host socket on it and to whatever k3s/ServiceLB/hostPort maps it to, and only those ports.
+      '';
+    };
     trustedInterfaces = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -110,7 +120,10 @@ in
       interfaces = lib.genAttrs ([ cfg.lan ] ++ cfg.trustedInterfaces) (_: {
         allowedTCPPorts = [ 22 53 80 443 6443 ];
         allowedUDPPorts = [ 53 67 ];
-      });
+      }) // {
+        # host sockets (a hostNetwork pod such as Traefik) need the INPUT rule too; DNAT'd ports only need the mangle exception
+        ${cfg.wan}.allowedTCPPorts = cfg.wanOpenTcpPorts;
+      };
       extraCommands = ''
         # WAN: drop every unsolicited inbound connection before DNAT (see header comment).
         ${ipt} -t mangle -N router-wan-in 2>/dev/null || ${ipt} -t mangle -F router-wan-in
@@ -118,7 +131,7 @@ in
         ${ipt} -t mangle -A router-wan-in -p udp --sport 67 --dport 68 -j RETURN   # DHCP replies
         ${ipt} -t mangle -A router-wan-in -p icmp --icmp-type destination-unreachable -j RETURN
         ${ipt} -t mangle -A router-wan-in -p icmp --icmp-type time-exceeded -j RETURN
-        ${ipt} -t mangle -A router-wan-in -j DROP
+        ${lib.concatMapStrings (port: "${ipt} -t mangle -A router-wan-in -p tcp --dport ${toString port} -j RETURN\n        ") cfg.wanOpenTcpPorts}${ipt} -t mangle -A router-wan-in -j DROP
         ${ipt} -t mangle -C PREROUTING -i ${cfg.wan} -j router-wan-in 2>/dev/null ||
           ${ipt} -t mangle -I PREROUTING -i ${cfg.wan} -j router-wan-in
       '';

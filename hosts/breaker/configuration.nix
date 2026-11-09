@@ -93,6 +93,8 @@
     prefixLength = 22;
     subnet = "192.168.68.0/22";
     dhcp.pool = "192.168.69.1 - 192.168.70.254";
+    # remote users reach Traefik (hostNetwork) through Cloudflare; nothing else is open on the WAN
+    wanOpenTcpPorts = [ 80 443 ];
     dhcp.reservations = [
       { mac = "fc:aa:14:97:9b:11"; ip = "192.168.68.67"; hostname = "fridge"; }
     ];

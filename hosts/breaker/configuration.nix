@@ -156,27 +156,10 @@
     git vim htop btop curl dig tcpdump ethtool pciutils usbutils smartmontools nvme-cli rsync nfs-utils
   ];
 
-  # Read-only disk health without a password, so a session (or a person over ssh without a tty) can check
-  # SMART, NVMe logs and pool state, e.g. before adding a drive to the pantry mirror. Nothing here writes:
-  # no `nvme format`, no `zpool attach/add/replace/scrub`, no smartctl self-test (those still ask for the password).
-  security.sudo.extraRules = [{
-    users = [ "corndog" ];
-    commands = map (command: { inherit command; options = [ "NOPASSWD" ]; }) [
-      "/run/current-system/sw/bin/smartctl -a *"
-      "/run/current-system/sw/bin/smartctl -x *"
-      "/run/current-system/sw/bin/smartctl -i *"
-      "/run/current-system/sw/bin/smartctl -H *"
-      "/run/current-system/sw/bin/smartctl --scan"
-      "/run/current-system/sw/bin/nvme list"
-      "/run/current-system/sw/bin/nvme smart-log *"
-      "/run/current-system/sw/bin/nvme id-ctrl *"
-      "/run/current-system/sw/bin/nvme id-ns *"
-      "/run/current-system/sw/bin/zpool status"
-      "/run/current-system/sw/bin/zpool status *"
-      "/run/current-system/sw/bin/zpool list"
-      "/run/current-system/sw/bin/zpool list *"
-    ];
-  }];
+  # Passwordless sudo for wheel (corndog). Login is key-only SSH (modules/common.nix), so "who can sudo"
+  # == "who holds the key"; the password was only friction for ssh sessions with no tty (e.g. disk checks
+  # before adding the new NVMe to the pantry mirror). Breaker-only; delete this line to revert.
+  security.sudo.wheelNeedsPassword = false;
 
   system.stateVersion = "26.05";
 }

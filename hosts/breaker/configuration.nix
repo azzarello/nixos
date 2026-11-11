@@ -155,8 +155,13 @@
   hardware.enableRedistributableFirmware = true;
 
   environment.systemPackages = with pkgs; [
-    git vim htop btop curl dig tcpdump ethtool pciutils usbutils smartmontools rsync nfs-utils
+    git vim htop btop curl dig tcpdump ethtool pciutils usbutils smartmontools nvme-cli rsync nfs-utils
   ];
+
+  # Passwordless sudo for wheel (corndog). Login is key-only SSH (modules/common.nix), so "who can sudo"
+  # == "who holds the key"; the password was only friction for ssh sessions with no tty (e.g. disk checks
+  # before adding the new NVMe to the pantry mirror). Breaker-only; delete this line to revert.
+  security.sudo.wheelNeedsPassword = false;
 
   system.stateVersion = "26.05";
 }

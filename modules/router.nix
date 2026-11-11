@@ -2,7 +2,8 @@
 # Home). Off by default (`router.enable`); hosts opt in. Design + cutover runbook: docs/router.md.
 # Tested by tests/router.nix (fake ISP <-> router <-> LAN client VMs).
 #
-# Security model: the WAN side accepts NOTHING unsolicited. Inbound NEW connections on the WAN
+# Security model: the WAN side accepts NOTHING unsolicited, except the TCP ports in `router.wanOpenTcpPorts`
+# (empty by default). Inbound NEW connections on the WAN
 # interface are dropped in mangle/PREROUTING, i.e. BEFORE any DNAT. That matters on a k3s host:
 # ServiceLB/hostPort DNAT matches every local address, so without this every LoadBalancer
 # port would be reachable from the internet even though the INPUT firewall is closed.
@@ -47,6 +48,11 @@ in
         default = [{ name = "AdGuard DNS filter"; url = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"; }];
       };
       userRules = mkOption { type = types.listOf types.str; default = [ ]; description = "AdGuard custom filtering rules."; };
+      parentalControl = mkOption { type = types.bool; default = false; description = "AdGuard's parental-control lookup service (adult sites)."; };
+      safeSearch = {
+        enable = mkOption { type = types.bool; default = false; description = "Force safe search on supported search engines."; };
+        youtube = mkOption { type = types.bool; default = false; description = "Also force YouTube Restricted Mode (hides comments and many ordinary videos)."; };
+      };
       rewrites = mkOption {
         description = "Extra DNS rewrites (domain -> answer), on top of <reservation>.lan and router.lan.";
         type = types.listOf (types.submodule { options = { domain = mkOption { type = types.str; }; answer = mkOption { type = types.str; }; }; });
@@ -61,9 +67,25 @@ in
         }; });
         default = [ ];
       };
+      listenAddresses = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "192.168.68.71" ];
+        description = "Extra addresses AdGuard answers on (besides 127.0.0.1 and, in router mode, the router address). Needed for dnsOnly.";
+      };
       dnssec = mkOption { type = types.bool; default = true; };
       cacheSize = mkOption { type = types.int; default = 4194304; };
       upstreamMode = mkOption { type = types.enum [ "load_balance" "parallel" "fastest_addr" ]; default = "load_balance"; };
+    };
+    dnsOnly = mkEnableOption "AdGuard Home on its own, without the rest of the router role (a trial run of DNS before the cutover; the LAN keeps its current router and DHCP)";
+    wanOpenTcpPorts = mkOption {
+      type = types.listOf types.port;
+      default = [ ];
+      example = [ 80 443 ];
+      description = ''
+        TCP ports reachable from the WAN. Empty (the default) keeps the WAN fully closed. The drop runs before
+        DNAT, so a port listed here is open to a host socket on it and to whatever k3s/ServiceLB/hostPort maps it to, and only those ports.
+      '';
     };
     trustedInterfaces = mkOption {
       type = types.listOf types.str;
@@ -72,7 +94,7 @@ in
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkMerge [ (mkIf cfg.enable {
     boot.kernel.sysctl = {
       "net.ipv4.ip_forward" = 1;
       # IPv6 routing is out of scope for now (docs/router.md): no RA/DHCPv6 on the LAN.
@@ -105,7 +127,10 @@ in
       interfaces = lib.genAttrs ([ cfg.lan ] ++ cfg.trustedInterfaces) (_: {
         allowedTCPPorts = [ 22 53 80 443 6443 ];
         allowedUDPPorts = [ 53 67 ];
-      });
+      }) // {
+        # host sockets (a hostNetwork pod such as Traefik) need the INPUT rule too; DNAT'd ports only need the mangle exception
+        ${cfg.wan}.allowedTCPPorts = cfg.wanOpenTcpPorts;
+      };
       extraCommands = ''
         # WAN: drop every unsolicited inbound connection before DNAT (see header comment).
         ${ipt} -t mangle -N router-wan-in 2>/dev/null || ${ipt} -t mangle -F router-wan-in
@@ -113,7 +138,7 @@ in
         ${ipt} -t mangle -A router-wan-in -p udp --sport 67 --dport 68 -j RETURN   # DHCP replies
         ${ipt} -t mangle -A router-wan-in -p icmp --icmp-type destination-unreachable -j RETURN
         ${ipt} -t mangle -A router-wan-in -p icmp --icmp-type time-exceeded -j RETURN
-        ${ipt} -t mangle -A router-wan-in -j DROP
+        ${lib.concatMapStrings (port: "${ipt} -t mangle -A router-wan-in -p tcp --dport ${toString port} -j RETURN\n        ") cfg.wanOpenTcpPorts}${ipt} -t mangle -A router-wan-in -j DROP
         ${ipt} -t mangle -C PREROUTING -i ${cfg.wan} -j router-wan-in 2>/dev/null ||
           ${ipt} -t mangle -I PREROUTING -i ${cfg.wan} -j router-wan-in
       '';
@@ -146,13 +171,15 @@ in
         }];
       };
     };
+  })
 
+  (mkIf (cfg.enable || cfg.dnsOnly) {
     services.adguardhome = {
       enable = true;
       mutableSettings = false;
       settings = {
         dns = {
-          bind_hosts = [ "127.0.0.1" cfg.address ];
+          bind_hosts = [ "127.0.0.1" ] ++ lib.optional cfg.enable cfg.address ++ cfg.dns.listenAddresses;
           port = 53;
           upstream_dns = cfg.dns.upstreams;
           bootstrap_dns = cfg.dns.bootstrap;
@@ -168,6 +195,12 @@ in
         filtering.rewrites = map (r: { domain = "${r.hostname}.lan"; answer = r.ip; enabled = true; }) cfg.dhcp.reservations
           ++ [{ domain = "router.lan"; answer = cfg.address; enabled = true; }]
           ++ map (r: r // { enabled = true; }) cfg.dns.rewrites;
+        filtering.parental_enabled = cfg.dns.parentalControl;
+        filtering.safe_search = {
+          enabled = cfg.dns.safeSearch.enable;
+          inherit (cfg.dns.safeSearch) youtube;
+          bing = true; duckduckgo = true; ecosia = true; google = true; pixabay = true; yandex = true;
+        };
         filters = lib.imap1 (i: f: { enabled = true; inherit (f) url name; id = i; }) cfg.dns.filters;
         user_rules = cfg.dns.userRules;
         clients.persistent = map (c: {
@@ -185,5 +218,10 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
     };
-  };
+  })
+
+  (mkIf (cfg.dnsOnly && !cfg.enable) {
+    # answer the LAN on port 53 (the router role opens this itself)
+    networking.firewall.interfaces.${cfg.lan} = { allowedTCPPorts = [ 53 ]; allowedUDPPorts = [ 53 ]; };
+  }) ];
 }

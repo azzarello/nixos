@@ -83,6 +83,7 @@ pkgs.testers.runNixOSTest {
             dhcp.reservations = [{ mac = "02:00:00:00:00:99"; ip = "10.88.0.50"; hostname = "fridge"; }];
             dns.upstreams = [ "10.99.0.1" ];
             dns.bootstrap = [ "10.99.0.1" ];
+            wanOpenTcpPorts = [ 9997 9998 ];   # stand in for 80/443: 9998 a host socket (hostNetwork pod), 9997 a DNAT target (ServiceLB)
           };
           # The test VMs have no internet: no filter-list downloads.
           router.dns.filters = [ ];
@@ -90,6 +91,10 @@ pkgs.testers.runNixOSTest {
           router.dns.rewrites = [{ domain = "nas.example.home"; answer = "10.88.0.50"; }];
           router.dns.userRules = [ "||blocked.example.test^" ];
           router.dns.clients = [{ name = "speaker"; ids = [ "02:00:00:00:00:77" ]; filtering = false; }];
+          systemd.services.host-socket = {   # stands in for a hostNetwork Traefik on 80/443
+            wantedBy = [ "multi-user.target" ];
+            serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 9998 --directory /etc";
+          };
           environment.systemPackages = [ pkgs.iptables pkgs.dig ];
         }
         (lib.mkIf withK3s {
@@ -170,6 +175,19 @@ pkgs.testers.runNixOSTest {
         isp.succeed(f"curl -sf -m 5 http://{wan_ip}:9999/hostname")
         router.succeed("iptables -t mangle -I PREROUTING -i eth1 -j router-wan-in")
         isp.fail(f"curl -sf -m 5 http://{wan_ip}:9999/hostname")
+
+    with subtest("wanOpenTcpPorts: only the listed ports are reachable from the WAN, nothing else"):
+        router.wait_for_open_port(9998)
+        isp.succeed(f"curl -sf -m 5 http://{wan_ip}:9998/hostname")   # host socket (hostNetwork pod)
+        router.succeed(f"iptables -t nat -I PREROUTING -p tcp --dport 9997 -m addrtype --dst-type LOCAL -j DNAT --to-destination {client_ip}:8000")
+        router.succeed(f"iptables -t nat -I PREROUTING -p tcp --dport 9996 -m addrtype --dst-type LOCAL -j DNAT --to-destination {client_ip}:8000")
+        isp.succeed(f"curl -sf -m 5 http://{wan_ip}:9997/hostname")   # DNAT target (ServiceLB)
+        isp.fail(f"curl -sf -m 5 http://{wan_ip}:9996/hostname")      # same DNAT, port not listed: dropped
+        isp.fail(f"nc -z -w 3 {wan_ip} 22")
+        isp.fail(f"nc -z -w 3 {wan_ip} 53")
+        isp.fail(f"dig +time=2 +tries=1 @{wan_ip} example.test")
+        # TCP only: nothing opened for UDP
+        router.fail("iptables -t mangle -S router-wan-in | grep -E 'udp.*(9997|9998)'")
   '' + pkgs.lib.optionalString withK3s ''
 
     with subtest("real k3s ServiceLB: LAN reaches the LoadBalancer port, WAN does not"):

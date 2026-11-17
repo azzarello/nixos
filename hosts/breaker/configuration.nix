@@ -14,8 +14,18 @@
   services.zfs.autoScrub.enable = true;
   # pantry: SK hynix P31 1TB NVMe, single vdev for now. Add the second drive with:
   #   zpool attach pantry nvme-SHGP31-1000GM-2_AS12T000710902J21 /dev/disk/by-id/<new-nvme>
-  boot.zfs.extraPools = [ "pantry" ];
+  boot.zfs.extraPools = [ "pantry" "bulk" ];
   zfs.datasets."pantry" = { mountpoint = "/pantry"; properties."com.sun:auto-snapshot" = "false"; };
+  # bulk: single-vdev pool on the data partition of the boot SSD (SK hynix SHGS31 1TB, partlabel disk-main-data,
+  # created by hand 2026-11-16: ashift=12 lz4). Rebuildable data only (bulk downloads, caches, photo
+  # library/thumbs, camera recordings): no redundancy, never snapshotted. Datasets get quotas so one
+  # consumer can't fill the disk.
+  # Optional (2026-11-17): if bulk is missing or won't import, breaker boots without it instead of failing
+  # zfs-import.target (and k3s with it). So anything that uses /bulk must guard its mount and never write into an
+  # empty /bulk on the root disk: RequiresMountsFor=/bulk/... for a unit, a hostPath of type Directory (a dir that
+  # exists only on the dataset) for a pod.
+  zfs.optionalPools = [ "bulk" ];
+  zfs.datasets."bulk" = { mountpoint = "/bulk"; properties."com.sun:auto-snapshot" = "false"; };
   # k3s app state (hostPath dirs). Auto-snapshotted: the undo button for every app's config/DBs.
   k3s.storagePath = "/pantry/k3s/local-path";
   zfs.datasets."pantry/k3s" = { mountpoint = "/pantry/k3s"; properties."com.sun:auto-snapshot" = "true"; };

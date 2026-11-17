@@ -11,7 +11,7 @@ NixOS configurations for my machines. Flake-based, tracking `nixos-unstable`.
 |---|---|
 | `hosts/breaker/` | host config, disko layout (SATA SSD, btrfs), generated hardware config |
 | `modules/k3s.nix` | single-node k3s; app state on ZFS; graceful pod stop at shutdown |
-| `modules/zfs-datasets.nix` | declarative ZFS datasets (create + converge properties, never destroy) |
+| `modules/zfs-datasets.nix` | declarative ZFS datasets (create + converge properties, never destroy); optional pools the host boots without |
 | `modules/router.nix` | router role (WAN DHCP, NAT, Kea DHCP, AdGuard Home DNS, WAN-closed firewall), off by default |
 | `tests/router.nix` | VM test: fake ISP <-> router <-> LAN client |
 | `docs/router.md` | router design + cutover/rollback runbook |

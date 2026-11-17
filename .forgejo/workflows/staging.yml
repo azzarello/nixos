@@ -1,0 +1,22 @@
+# Gate for PRs to this repo. Forgejo Actions on breaker's runner. Job and workflow names are what branch
+# protection and pr-automerge look for ("staging / gate (pull_request)"), shared with the private overlay repo.
+# The real work is `nixos-pr-gate`, installed on the runner from the private repo (so a PR here can't change its own
+# gate): it checks the PR's commits, then builds breaker's config with this PR as the `public` input and boots it
+# in the NixOS VM tests. A green gate merges the PR automatically; there is no reviewer step here.
+name: staging
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  gate:
+    if: github.event.pull_request.head.repo.full_name == github.repository   # never run a fork's code on breaker
+    runs-on: breaker
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}   # the guard reads the commits between the PR's base and head
+      - name: "gate: commit guard, build, boot VM tests"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: nixos-pr-gate "$PWD" "$BASE" "$HEAD"

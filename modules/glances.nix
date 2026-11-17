@@ -81,6 +81,10 @@ in {
           install -m644 ${./glances-mobile.html} "$(echo $out/lib/python*/site-packages/glances/outputs/static/public)/m.html"
         '';
         doCheck = false;   # only a static file added; upstream's tests already ran on the base package
+        # python-jose is optional in Glances (only for JWT login on the web API, unused: no password here) and nixpkgs
+        # marks 3.5.0 insecure (CVE-2026-120459): leave it out rather than permit an insecure package
+        dependencies = lib.filter (d: (d.pname or "") != "python-jose") old.dependencies;
+        pythonRemoveDeps = (old.pythonRemoveDeps or [ ]) ++ [ "python-jose" ];
       });
       extraArgs = [ "--webserver" "-C" "${conf}" ];
     };

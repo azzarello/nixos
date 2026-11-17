@@ -13,6 +13,7 @@
 let
   cfg = config.monitoring.glances;
   summary = "/run/k3s-glance/summary.txt";
+  driveTemps = "/run/drive-temps/temps.txt";
   conf = pkgs.writeText "glances.conf" ''
     [global]
     check_update=false
@@ -31,11 +32,25 @@ let
     [fs]
     hide=/boot.*,/nix/store,/run.*,/var/lib/kubelet.*,/var/lib/rancher.*
 
+    # NVMe/SATA temperatures come from the Drives panel below (named by model, with the drive's own
+    # limits). The raw hwmon labels (Composite, Composite 1, Sensor 2 3) don't say which drive is which,
+    # and nvme0/nvme1 swap order between boots.
+    [sensors]
+    hide=composite.*,sensor .*,drivetemp.*
+    alias=package id 0:CPU package,core 0:CPU core 0,core 1:CPU core 1,core 2:CPU core 2,core 3:CPU core 3,core 4:CPU core 4,core 5:CPU core 5,pch_cometlake 0:Chipset
+
     [containers]
     disable=True
 
     [amps]
     disable=False
+
+    [amp_drives]
+    enable=true
+    regex=.*glances.*
+    refresh=15
+    one_line=false
+    command=cat ${driveTemps}
 
     [amp_k3s]
     enable=true
@@ -113,6 +128,31 @@ in {
                 cpu = $3; sub(/m$/, "", cpu); mem = $4; sub(/Mi$/, "", mem)
                 printf "  %-11s %-28s %5.1f%% %5.1fG\n", $1, substr(name, 1, 28), cpu / (cores * 10), mem / 1024 }'
           } > "$out.tmp" 2>&1 && mv "$out.tmp" "$out"
+          sleep 15
+        done
+      '';
+    };
+
+    # Drive temperatures by model: "<model>  <composite>C  sensor2 <n>C  limit <warn>/<crit>". sysfs hwmon
+    # files are world-readable, so this needs no privileges. sensor2 is the controller on NVMe drives.
+    systemd.services.drive-temps = {
+      description = "Drive temperatures for the Glances Drives panel";
+      wantedBy = [ "multi-user.target" ];
+      path = with pkgs; [ coreutils gnused ];
+      serviceConfig = { DynamicUser = true; RuntimeDirectory = "drive-temps"; RuntimeDirectoryMode = "0755"; Restart = "always"; };
+      script = ''
+        while :; do
+          for h in /sys/class/hwmon/hwmon*; do
+            n=$(cat "$h/name" 2>/dev/null)
+            case "$n" in nvme|drivetemp) ;; *) continue ;; esac
+            m=$(tr -s ' ' < "$h/device/model" 2>/dev/null | sed 's/ *$//'); [ -n "$m" ] || m=$n
+            read -r c < "$h/temp1_input" || continue
+            l="$m  $((c/1000))°C"
+            [ -r "$h/temp3_input" ] && l="$l  sensor2 $(( $(cat "$h/temp3_input")/1000 ))°C"
+            w=$(cat "$h/temp1_max" 2>/dev/null) k=$(cat "$h/temp1_crit" 2>/dev/null)
+            [ -n "$w" ] && [ -n "$k" ] && l="$l  limit $((w/1000))/$((k/1000))"
+            echo "$l"
+          done | sort > ${driveTemps}.tmp && mv ${driveTemps}.tmp ${driveTemps}
           sleep 15
         done
       '';

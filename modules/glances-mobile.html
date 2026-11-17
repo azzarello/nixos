@@ -133,7 +133,17 @@ function renderK3s(text) {
   $("k3s").innerHTML = html || '<div class="empty">no pods</div>';
 }
 
-const SENSOR_NAMES = { "Package id 0": "CPU package", "Composite": "NVMe", "drivetemp 0": "SATA SSD <small>self-reported</small>", "pch_cometlake 0": "Chipset" };
+// Drives panel lines: "<model>  34°C  sensor2 34°C  limit 69/72" (sensor2 = NVMe controller, no known limit)
+function drivesHtml(amp) {
+  return String((amp && amp.result) || "").split("\n").map(l => {
+    const m = l.match(/^(.+?)\s+(\d+)°C(?:\s+sensor2\s+(\d+)°C)?(?:\s+limit\s+(\d+)\/(\d+))?\s*$/);
+    if (!m) return "";
+    const w = m[4] ? +m[4] : 70, c = m[5] ? +m[5] : 80;
+    return `<div class="row"><div class="n">${esc(m[1])}</div><div class="r"><b class="${lvl(+m[2], w, c)}">${m[2]}°C</b>${m[3] ? ` <small>ctrl ${m[3]}°C</small>` : ""}</div></div>`;
+  }).join("");
+}
+
+const SENSOR_NAMES = { "CPU package": "CPU package", "Chipset": "Chipset" };
 
 async function tick() {
   try {
@@ -154,8 +164,8 @@ async function tick() {
     $("loadd").textContent = `5m ${load.min5.toFixed(2)} · 15m ${load.min15.toFixed(2)} · /${load.cpucore}`;
 
     const temps = sensors.filter(s => s.unit === "C");
-    const pkg = temps.find(s => s.label === "Package id 0");
-    const cores = temps.filter(s => /^Core \d+/.test(s.label));
+    const pkg = temps.find(s => s.label === "CPU package");
+    const cores = temps.filter(s => /^CPU core \d+/.test(s.label));
     if (pkg) {
       $("temp").textContent = pkg.value + "°"; $("temp").className = "v " + lvl(pkg.value, pkg.warning || 80, pkg.critical || 100);
       $("tempd").textContent = cores.length ? `hottest core ${Math.max(...cores.map(c => c.value))}°` : "";
@@ -163,7 +173,7 @@ async function tick() {
     $("sensors").innerHTML = temps.filter(s => SENSOR_NAMES[s.label]).map(s => {
       const w = s.warning && s.warning < 200 ? s.warning : 80, c = s.critical && s.critical < 200 ? s.critical : 95;
       return `<div class="row"><div class="n">${SENSOR_NAMES[s.label]}</div><div class="r"><b class="${lvl(s.value, w, c)}">${s.value}°C</b></div></div>`;
-    }).join("") + (sensors.filter(s => s.unit !== "C" && s.value).map(s =>
+    }).join("") + drivesHtml(amps.find(a => a.name === "Drives")) + (sensors.filter(s => s.unit !== "C" && s.value).map(s =>
       `<div class="row"><div class="n">${esc(s.label)}</div><div class="r"><b>${esc(s.value)} ${esc(s.unit)}</b></div></div>`).join(""));
 
     $("net").innerHTML = net.filter(n => n.bytes_all_gauge > 0).map(n =>

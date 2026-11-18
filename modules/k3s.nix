@@ -68,13 +68,19 @@
   # TERM), then stop the pod sandboxes so the shims exit. kubelet recreates everything on
   # boot. (k3s-killall.sh isn't used: it `systemctl stop`s every k3s*.service, including
   # this one, and deadlocked until timeout.) Never restarted on switch: that would kill pods.
+  # The stops run 16 at a time: `crictl stop` with many ids works through them one by one,
+  # so each container that ignores SIGTERM adds its full 30 s. With 97 containers
+  # (2026-11-18) only 31 had stopped when this unit hit its 100 s timeout, and the final
+  # stage waited ~90 s on the rest again. In parallel the whole stop takes at most ~30 s.
+  # kubelet is still running and restarts a few containers as they exit; stopping the
+  # sandboxes afterwards kills those too.
   systemd.services.k3s-stop-pods-on-shutdown = {
     description = "Gracefully stop all k3s containers at shutdown";
     wantedBy = [ "multi-user.target" ];
     after = [ "k3s.service" ];
     restartIfChanged = false;
     stopIfChanged = false;
-    path = [ config.services.k3s.package pkgs.coreutils ];
+    path = [ config.services.k3s.package pkgs.coreutils pkgs.findutils ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
@@ -82,11 +88,12 @@
       TimeoutStopSec = 100;
     };
     preStop = ''
-      ids=$(k3s crictl ps -q 2>/dev/null)
-      [ -n "$ids" ] && k3s crictl stop --timeout 30 $ids >/dev/null 2>&1
-      pods=$(k3s crictl pods -q 2>/dev/null)
-      [ -n "$pods" ] && k3s crictl stopp $pods >/dev/null 2>&1
-      echo "stopped $(echo $ids | wc -w) containers, $(echo $pods | wc -w) pod sandboxes"
+      ids=$(k3s crictl ps -q 2>/dev/null || true)
+      printf '%s\n' $ids | xargs -r -P 16 -n 1 k3s crictl stop --timeout 30 >/dev/null 2>&1 || true
+      pods=$(k3s crictl pods -q 2>/dev/null || true)
+      printf '%s\n' $pods | xargs -r -P 16 -n 1 k3s crictl stopp >/dev/null 2>&1 || true
+      left=$(k3s crictl ps -q 2>/dev/null | wc -l || true)
+      echo "stopped $(echo $ids | wc -w) containers, $(echo $pods | wc -w) pod sandboxes in ''${SECONDS}s; $left still running"
     '';
   };
 

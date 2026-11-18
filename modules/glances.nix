@@ -16,6 +16,8 @@ let
   driveTemps = "/run/drive-temps/temps.txt";
   conf = pkgs.writeText "glances.conf" ''
     [global]
+    # 10 s, not the default 2 s: an open web page made Glances poll everything every 2 s (~200m CPU, ~2 W on breaker, 2026-11-18)
+    refresh=10
     check_update=false
 
     [outputs]
@@ -86,7 +88,8 @@ in {
         dependencies = lib.filter (d: (d.pname or "") != "python-jose") old.dependencies;
         pythonRemoveDeps = (old.pythonRemoveDeps or [ ]) ++ [ "python-jose" ];
       });
-      extraArgs = [ "--webserver" "-C" "${conf}" ];
+      # 10 s, not the default 2 s: an open web page made Glances poll everything every 2 s (~200m CPU, ~2 W on breaker, 2026-11-18)
+      extraArgs = [ "--webserver" "-C" "${conf}" "-t" "10" ];
     };
 
     systemd.services.k3s-glance = lib.mkIf config.services.k3s.enable {

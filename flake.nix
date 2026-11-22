@@ -22,6 +22,7 @@
       ./modules/zfs-datasets.nix
       ./modules/router.nix
       ./modules/glances.nix
+      ./modules/cli-tools.nix
     ];
   in {
     # breaker's module set, for configs and tests built on top of it (e.g. a private overlay's VM test)

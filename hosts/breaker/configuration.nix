@@ -148,7 +148,7 @@
     extraUpFlags = [ "--advertise-routes=192.168.68.0/22" ];
     extraSetFlags = [ "--advertise-routes=192.168.68.0/22" ];
   };
-  monitoring.glances = { enable = true; interfaces = [ "eno1" "tailscale0" ]; };
+  monitoring.glances = { enable = true; interfaces = [ "eno1" "tailscale0" ]; intelGpu = true; };
   services.fstrim.enable = true;
   # Idle power (measured 2026-10-25 with turbostat SysWatt, 30 s windows): powertop's tunables (runtime PM for
   # idle PCI/SATA/USB devices, audio codec power save, NMI watchdog off, 15 s writeback) took the platform

@@ -6,6 +6,10 @@
 # (not-ready pods, top pods by memory, ZFS ARC, RAPL power) to /run/k3s-glance/summary.txt and Glances cats it.
 # Glances itself stays a DynamicUser with no cluster credentials.
 #
+# Intel iGPU (monitoring.glances.intelGpu): Glances' own GPU plugin reports clock / max clock as "proc %" (about 30%
+# at idle on a 350-1150 MHz part), not load. gpu-glance.service samples intel_gpu_top instead (busy % per engine,
+# GPU watts, the processes using it) and Glances shows that as the "Gpu" AMP panel.
+#
 # Phones: glances-mobile.html is added to Glances' own /static (same origin as its API) and served at
 # /static/m.html; the stock UI hides disks/network/sensors below 768 px. The reverse proxy can send
 # phone user agents from / to it (full UI stays at /?full=1).
@@ -14,7 +18,8 @@ let
   cfg = config.monitoring.glances;
   summary = "/run/k3s-glance/summary.txt";
   driveTemps = "/run/drive-temps/temps.txt";
-  conf = pkgs.writeText "glances.conf" ''
+  gpuSummary = "/run/gpu-glance/gpu.txt";
+  conf = pkgs.writeText "glances.conf" (''
     [global]
     # 10 s, not the default 2 s: an open web page made Glances poll everything every 2 s (~200m CPU, ~2 W on breaker, 2026-11-18)
     refresh=10
@@ -60,7 +65,15 @@ let
     refresh=15
     one_line=false
     command=cat ${summary}
-  '';
+  '' + lib.optionalString cfg.intelGpu ''
+
+    [amp_gpu]
+    enable=true
+    regex=.*glances.*
+    refresh=15
+    one_line=false
+    command=cat ${gpuSummary}
+  '');
 in {
   options.monitoring.glances = {
     enable = lib.mkEnableOption "Glances dashboard";
@@ -74,6 +87,7 @@ in {
       default = [ ];
       description = "Extra Host headers the web UI answers to: LAN IP, reverse-proxy hostname.";
     };
+    intelGpu = lib.mkEnableOption "the Intel iGPU panel (gpu-glance.service samples intel_gpu_top as root every 15 s)";
   };
   config = lib.mkIf cfg.enable {
     services.glances = {
@@ -161,6 +175,45 @@ in {
             echo "$l"
           done | sort > ${driveTemps}.tmp && mv ${driveTemps}.tmp ${driveTemps}
           sleep 15
+        done
+      '';
+    };
+
+    # Intel iGPU panel: "engines render 10.8%  blitter 0%  video 1.4%  enhance 0%", "awake 21%  clock 149 MHz  power
+    # 1.3 W", then "client <pod or host> <process>  render 9.7%" for each process using the GPU right now. One 1 s
+    # sample every 15 s (~0.14 s CPU each). Root: the i915 PMU needs CAP_PERFMON, per-process use comes from other
+    # users' /proc/<pid>/fdinfo, and a container's pod name from /proc/<pid>/root/etc/hostname. clock is the average
+    # over the sample, idle (RC6) time included. No i915 (the VM tests): no sample, so the panel stays empty.
+    systemd.services.gpu-glance = lib.mkIf cfg.intelGpu {
+      description = "Intel GPU summary for the Glances Gpu panel";
+      wantedBy = [ "multi-user.target" ];
+      path = with pkgs; [ intel-gpu-tools jq gnused coreutils ];
+      serviceConfig = { RuntimeDirectory = "gpu-glance"; RuntimeDirectoryMode = "0755"; Restart = "always"; };
+      script = ''
+        out=${gpuSummary}
+        while :; do
+          j=$(intel_gpu_top -J -s 1000 -n 2 2>/dev/null | jq -c '.[-1]' 2>/dev/null) || j=""
+          if [ -n "$j" ] && [ "$j" != null ]; then
+            jq -r '
+              def pct: (tonumber * 10 | round / 10 | tostring) + "%";
+              def eng: ascii_downcase | sub("/3d$"; "") | sub("videoenhance"; "enhance");
+              "engines " + ([.engines | to_entries[] | "\(.key | eng) \(.value.busy | pct)"] | join("  ")),
+              "awake \(100 - .rc6.value | round)%  clock \(.frequency.actual | round) MHz  power \((.power.GPU // 0) * 10 | round / 10) W",
+              (.clients // {} | .[] | select([.["engine-classes"][].busy | tonumber] | max > 0)
+                | "client \(.pid) \(.name)  " + ([.["engine-classes"] | to_entries[] | select((.value.busy | tonumber) > 0)
+                    | "\(.key | eng) \(.value.busy | pct)"] | join("  ")))
+            ' <<<"$j" | while IFS= read -r l; do
+              case $l in
+                "client "*)
+                  rest=''${l#client }; pid=''${rest%% *}; rest=''${rest#* }
+                  # pod name without its ReplicaSet/pod hash (as in the K3s panel); the host's name for host processes
+                  who=$(sed -E 's/-[a-z0-9]{8,10}-[a-z0-9]{5}$//; s/-[a-z0-9]{5}$//' "/proc/$pid/root/etc/hostname" 2>/dev/null) || who="?"
+                  echo "client ''${who:-?} $rest" ;;
+                *) echo "$l" ;;
+              esac
+            done > "$out.tmp" && mv "$out.tmp" "$out"
+          fi
+          sleep 14
         done
       '';
     };

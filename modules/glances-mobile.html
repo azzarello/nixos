@@ -43,6 +43,7 @@
   .tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
   .tile .d { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tile svg { display: block; width: 100%; height: 28px; margin-top: 4px; }
+  .tile.wide { grid-column: 1 / -1; }
   .card { padding: 10px 12px; margin-bottom: 10px; }
   .card h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
              margin: 0 0 6px; display: flex; justify-content: space-between; font-weight: 600; }
@@ -79,10 +80,12 @@
   <div class="tile"><div class="k">CPU temp</div><div class="v" id="temp">–</div><div class="d" id="tempd"></div></div>
   <div class="tile"><div class="k">Power</div><div class="v" id="power">–</div><div class="d" id="powerd">board (RAPL)</div><svg id="pows" viewBox="0 0 60 28" preserveAspectRatio="none"></svg></div>
   <div class="tile"><div class="k">Pods</div><div class="v" id="podn">–</div><div class="d" id="podd"></div></div>
+  <div class="tile wide" id="gputile" hidden><div class="k">GPU</div><div class="v" id="gpu">–</div><div class="d" id="gpud"></div><svg id="gpus" viewBox="0 0 60 28" preserveAspectRatio="none"></svg></div>
 </div>
 
 <div class="card" id="alerts"></div>
 <div class="card"><h2>k3s pods <span>CPU % of box · memory</span></h2><div id="k3s" class="empty">loading…</div></div>
+<div class="card" id="gpucard" hidden><h2>GPU <span>busy % per engine</span></h2><div id="gpueng"></div><div id="gpucli"></div></div>
 <div class="card"><h2>Network</h2><div id="net"></div></div>
 <div class="card"><h2>Storage</h2><div id="fs"></div></div>
 <div class="card"><h2>Temperatures</h2><div id="sensors"></div></div>
@@ -92,8 +95,8 @@
 
 <script>
 const API = "/api/4/", EVERY = 3000, HIST = 60;
-const hist = { cpu: [], mem: [], pow: [] };
-let lastK3s = "", lastPower = "";
+const hist = { cpu: [], mem: [], pow: [], gpu: [] };
+let lastK3s = "", lastPower = "", lastGpu = "";
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const gb = b => (b / 2 ** 30).toFixed(b >= 10 * 2 ** 30 ? 0 : 1) + "G";
@@ -143,6 +146,34 @@ function drivesHtml(amp) {
   }).join("");
 }
 
+// Gpu panel (gpu-glance.service): "engines render 10.8%  blitter 0%  video 1.4%  enhance 0%",
+// "awake 21%  clock 149 MHz  power 1.3 W", then "client <pod or host> <process>  render 9.7%  video 0.7%"
+const ENGINES = { render: "Render / 3D", video: "Video decode/encode", enhance: "Video enhance", blitter: "Blitter (copies)" };
+function renderGpu(text) {
+  if (!text || text === lastGpu) return;   // no panel (not an Intel host): stays hidden; same sample: nothing new
+  const eng = {}, clients = []; let m, info = null;
+  for (const l of text.split("\n")) {
+    if (l.startsWith("engines ")) { for (const e of l.matchAll(/(\w+) ([\d.]+)%/g)) eng[e[1]] = +e[2]; }
+    else if ((m = l.match(/^awake (\d+)%\s+clock (\d+) MHz\s+power ([\d.]+) W/))) info = m;
+    else if ((m = l.match(/^client (\S+) (.+?)  (.+)$/))) clients.push(m);
+  }
+  const names = Object.keys(ENGINES).filter(n => n in eng).concat(Object.keys(eng).filter(n => !(n in ENGINES)));
+  if (!names.length) return;
+  lastGpu = text;
+  const fmt = v => v.toFixed(v >= 10 || !v ? 0 : 1) + "%", top = Math.max(...names.map(n => eng[n]));
+  $("gputile").hidden = $("gpucard").hidden = false;
+  $("gpu").textContent = Math.round(top) + "%"; $("gpu").className = "v " + lvl(top, 70, 90);
+  const busy = [...names].sort((a, b) => eng[b] - eng[a]).filter(n => eng[n] > 0).slice(0, 2).map(n => `${n} ${fmt(eng[n])}`);
+  $("gpud").textContent = [busy.length ? busy.join(" · ") : "idle", info && `${info[3]} W`].filter(Boolean).join(" · ");
+  push("gpu", top); spark("gpus", hist.gpu);
+  $("gpueng").innerHTML = names.map(n =>
+    `<div class="row" style="border:0;padding-bottom:0"><div class="n">${esc(ENGINES[n] || n)}</div><div class="r"><b>${fmt(eng[n])}</b></div></div>${meter(eng[n])}`
+  ).join("") + (info ? `<div class="row"><div class="n">awake ${info[1]}% <small>avg clock ${info[2]} MHz</small></div><div class="r"><b>${info[3]} W</b></div></div>` : "");
+  $("gpucli").innerHTML = clients.map(c =>
+    `<div class="row"><div class="n">${esc(c[1])} <small>${esc(c[2])}</small></div><div class="r">${esc(c[3].replace(/\s{2,}/g, " · "))}</div></div>`
+  ).join("") || '<div class="empty">nothing using the GPU</div>';
+}
+
 const SENSOR_NAMES = { "CPU package": "CPU package", "Chipset": "Chipset" };
 
 async function tick() {
@@ -187,6 +218,7 @@ async function tick() {
     ).join("");
 
     const k3s = amps.find(a => a.name === "K3s"); renderK3s(k3s && k3s.result);
+    const gpu = amps.find(a => a.name === "Gpu"); renderGpu(gpu && gpu.result);
 
     $("procs").innerHTML = procs.map(p =>
       `<div class="row"><div class="n">${esc(p.name)} <small>${esc(p.username)}</small></div><div class="r"><b>${(p.cpu_percent / cpu.cpucore).toFixed(1)}%</b> · ${gb(p.memory_info.rss)}</div></div>`
